@@ -1,0 +1,11 @@
+*.sdf
+*.suo
+*.user
+*.pch
+Debug
+Release
+ipch
+Thumbs.db
+
+# Precached DAT files by AC2D
+*.pre

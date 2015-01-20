@@ -1,0 +1,2687 @@
+#include "stdafx.h"
+#include "cNetwork.h"
+#include "crc.h"
+
+//Some basic patch specific data
+//const char CLIENT_VERSION[] = "2005.08.001";	//August 17, 2005 Patch
+const char CLIENT_VERSION[] = "2011.10.001";	//6/15/2012
+
+//command line params to the client example:
+//-a teqilla2 -h 12.129.18.213:9000 -rodat off -glsticket
+
+bool SockCompare(SOCKADDR_IN *a, SOCKADDR_IN *b);
+
+bool SockCompare(SOCKADDR_IN *a, SOCKADDR_IN *b)
+{
+	if ((memcmp(&a->sin_addr, &b->sin_addr, sizeof(in_addr)))
+		||
+		(
+		(a->sin_port != b->sin_port)
+		&&
+		(a->sin_port != b->sin_port + 0x0100)
+		//Loginserver is retarded and sends from one port higher sometimes, so we have to account
+		//		and allow for that...
+		)
+		) return false;
+
+	return true;
+}
+
+cNetwork::cNetwork()
+{
+	m_dwGUIDLogin = 0;
+	f74ccount = 0;
+
+	WSADATA	wsaData;
+	USHORT wVR = 0x0202;
+	WSAStartup( wVR, &wsaData );
+
+	SOCKADDR_IN	siSockAddr;
+	siSockAddr.sin_family		= AF_INET;
+	siSockAddr.sin_addr.s_addr	= INADDR_ANY;
+	m_sSocket = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+
+	iConnPacketCount = 0;
+
+	bPortalMode = false;
+
+	int iError = SOCKET_ERROR;
+	int iSrcPort = 9010;
+	while (iError == SOCKET_ERROR)
+	{
+		siSockAddr.sin_port = htons( iSrcPort );
+		iError = bind(m_sSocket, (struct sockaddr *) &siSockAddr, sizeof(SOCKADDR_IN));
+		iSrcPort++;
+	}
+
+	m_dwStartTicks = GetTickCount();
+
+	m_zTicketSize = 0;
+	char acServerIP[32];
+	int acServerPort = 0;
+
+	for (int arg=0; arg < __argc; arg++)
+	{
+		if (strlen(__argv[arg]) != 2) { continue; }
+		if (__argv[arg][0] == '-')
+		{
+			switch (__argv[arg][1])
+			{
+				case 'h':
+				{
+					if (arg + 1 < __argc) {
+						strcpy(acServerIP, __argv[arg+1]);
+						acServerPort = atoi(strchr(acServerIP,':')+1);
+						*strchr(acServerIP,':') = 0;
+					}
+					break;
+				}
+				case 'a':
+				{
+					if (arg + 1 < __argc) {
+						ZeroMemory(m_zAccountName, 40);
+						strcpy(m_zAccountName, __argv[arg+1]);
+					}
+					break;
+				}
+			}
+		}
+	}
+
+	HKEY hkTicket;
+	if (!RegOpenKey(HKEY_CURRENT_USER,"Software\\Turbine\\AC1",&hkTicket))
+	{
+		m_zTicketSize = 0xf4;
+		DWORD tpout = 0x100;
+		if (RegQueryValueEx(hkTicket, "GLSTicket", NULL, NULL, m_zTicket, &tpout))
+		{
+			return;
+		}
+	}
+
+	m_siLoginServer.m_saServer.sin_family = AF_INET;
+	m_siLoginServer.m_saServer.sin_addr.s_addr = inet_addr(acServerIP);
+	m_siLoginServer.m_saServer.sin_port = htons( acServerPort );
+
+	m_treeNameIDCache.clear();
+
+	m_pActiveWorld = 0;
+
+	Reset();
+}
+
+cNetwork::~cNetwork()
+{
+//	Disconnect();
+//	closesocket(m_sSocket);
+
+	WSACleanup();
+}
+
+void cNetwork::Reset()
+{
+	//Reset the login servers.
+	for (std::list<cPacket *>::iterator it = m_siLoginServer.m_lSentPackets.begin(); it != m_siLoginServer.m_lSentPackets.end(); ++it)
+	{
+		delete (*it);
+	}
+	m_siLoginServer.m_lSentPackets.clear();
+	m_siLoginServer.m_iSendSequence = 0;
+	m_siLoginServer.m_wLogicalID = 0;
+	m_siLoginServer.m_wTable = 0;
+	m_siLoginServer.m_dwFlags = 0;
+	m_siLoginServer.m_dwLastPing = GetTickCount();
+	m_siLoginServer.m_dwLastSyncSent = 0;
+	m_siLoginServer.m_dwRecvSequence = 0;
+	m_siLoginServer.m_dwLastPacketSent = GetTickCount();
+	m_siLoginServer.m_dwLastConnectAttempt = GetTickCount();
+
+	//Now the world servers..
+	for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
+	{
+		for (std::list<cPacket *>::iterator j = (*i).m_lSentPackets.begin(); j != (*i).m_lSentPackets.end(); ++j)
+		{
+			delete (*j);
+		}
+		(*i).m_lSentPackets.clear();//Not really necessary?
+	}
+	m_siWorldServers.clear();
+
+	m_dwStartTicks = GetTickCount();
+	m_dwGameEventOut = 0;
+	m_dwFragmentSequenceOut = 1;
+}
+
+void cNetwork::SendWSPacket(cPacket *Packet, stServerInfo *Target, bool IncludeSeq, bool IncrementSeq)
+{
+#ifndef TerrainOnly
+	if (!Target)
+		return;
+
+	stTransitHeader *Head = Packet->GetTransit();
+
+	if (IncrementSeq)
+	{
+		Target->m_iSendSequence++;
+	}
+
+	if (IncludeSeq) {
+		Head->m_dwSequence = Target->m_iSendSequence;
+		Head->m_wTime = GetTime();
+	}
+	else {
+		Head->m_dwSequence = 0;
+		Head->m_wTime = 0;
+	}
+
+	if (Target->m_dwFlags & SF_SHOOK) {
+		Head->m_wID = Target->m_wLogicalID;
+		Head->m_wTable = Target->m_wTable;
+	}
+	else {
+		Head->m_wID = 0;
+		Head->m_wTable = 0;
+	}
+
+	if (Packet->GetTransit()->m_dwFlags & 0x200)
+	{
+		if (Target->m_dwFlags & SF_CRCSEEDS)
+		{
+			DWORD dwNewCRC, dwXorVal;
+			dwNewCRC = Calc200_CRC( Packet->GetData() );
+			dwXorVal = GetSendXORVal( Target->m_pdwSendCRC );
+			dwNewCRC ^= dwXorVal;
+			dwNewCRC += CalcTransportCRC( (DWORD *)Packet->GetData() );
+			Packet->GetTransit()->m_dwCRC = dwNewCRC;
+			Packet->m_dwSeed = dwXorVal; //Save XOR value - lost packets need this
+		}
+		else
+		{
+			m_Interface->OutputConsoleString("WS - trying to send 0x200 with no seeds, 'tard!");
+			if (IncludeSeq)
+				Target->m_iSendSequence--;
+			delete Packet;
+			return;
+		}
+	}
+	else
+		CalcCRC(Packet->GetData(), Packet->GetLength());//non-0x200 generic CRC
+
+	SendPacket(Packet, Target);
+#endif
+}
+
+void cNetwork::SendLSPacket(cPacket *Packet, bool IncludeSeq, bool IncrementSeq)
+{
+#ifndef TerrainOnly
+	stTransitHeader *Head = Packet->GetTransit();
+
+	if (IncrementSeq)
+	{
+		m_siLoginServer.m_iSendSequence++;
+	}
+
+	if (IncludeSeq) {
+		Head->m_dwSequence = m_siLoginServer.m_iSendSequence;
+		Head->m_wTime = GetTime();
+	}
+	else {
+		Head->m_dwSequence = 0;
+		Head->m_wTime = 0;
+	}
+
+	if (m_siLoginServer.m_dwFlags & SF_SHOOK)
+	{
+		Head->m_wID = m_siLoginServer.m_wLogicalID;
+		Head->m_wTable = m_siLoginServer.m_wTable;
+	}
+	else
+	{
+		Head->m_wID = 0;
+		Head->m_wTable = 0;
+	}
+
+	if (Packet->GetTransit()->m_dwFlags & 0x200 ||
+		Packet->GetTransit()->m_dwFlags & 0x100000)
+	{
+		if (m_siLoginServer.m_dwFlags & SF_CRCSEEDS)
+		{
+			DWORD dwNewCRC, dwXorVal;
+			dwNewCRC = Calc200_CRC( Packet->GetData() );
+			dwXorVal = GetSendXORVal( m_siLoginServer.m_pdwSendCRC );
+			dwNewCRC ^= dwXorVal;
+			dwNewCRC += CalcTransportCRC( (DWORD *)Packet->GetData() );
+			Packet->GetTransit()->m_dwCRC = dwNewCRC;
+			Packet->m_dwSeed = dwXorVal; //Save XOR value - lost packets need this
+		}
+		else
+		{
+			m_Interface->OutputConsoleString("LS - trying to send 0x200 with no seeds, 'tard!");
+			if (IncludeSeq)
+				m_siLoginServer.m_iSendSequence--;
+			delete Packet;
+			return;
+		}
+	}
+	else
+		CalcCRC(Packet->GetData(), Packet->GetLength());//non-0x200 generic CRC
+
+	SendPacket(Packet, &m_siLoginServer);
+#endif
+}
+
+void cNetwork::SendLostPacket(int iSendSequence, stServerInfo *Target)
+{
+	Lock();
+	for (std::list<cPacket *>::iterator i = Target->m_lSentPackets.begin(); i != Target->m_lSentPackets.end(); i++)
+	{
+		cPacket *Packet = *i;
+		if (Packet->GetTransit()->m_dwSequence == iSendSequence)
+		{
+			//Match
+			m_Interface->OutputConsoleString("Resending %X (%X) on %s", iSendSequence, Packet->GetTransit()->m_dwFlags, inet_ntoa(Target->m_saServer.sin_addr));
+			if (Packet->GetTransit()->m_dwFlags & 0x200)
+			{
+				Packet->GetTransit()->m_wTime = GetTime();
+				Packet->GetTransit()->m_dwFlags = 0x00000201;
+				DWORD dwNewCRC;
+				dwNewCRC = Calc200_CRC( Packet->GetData() );
+				dwNewCRC ^= Packet->m_dwSeed;
+				dwNewCRC += CalcTransportCRC( (DWORD *)Packet->GetData() );
+				Packet->GetTransit()->m_dwCRC = dwNewCRC;
+
+				sendto(m_sSocket, (char *)Packet->GetData(), Packet->GetLength(), NULL, (SOCKADDR *)&Target->m_saServer, sizeof( SOCKADDR ) );
+				Unlock();
+				return;
+			}
+			else
+			{
+				Packet->GetTransit()->m_wTime = GetTime();
+				CalcCRC(Packet->GetData(), Packet->GetLength());
+				sendto(m_sSocket, (char *)Packet->GetData(), Packet->GetLength(), NULL, (SOCKADDR *)&Target->m_saServer, sizeof( SOCKADDR ) );
+				Unlock();
+				return;
+			}
+			break;
+		}
+	}
+
+	Unlock();
+	m_Interface->OutputConsoleString("Couldn't resend %X on server %s, packet not found!", iSendSequence, inet_ntoa(Target->m_saServer.sin_addr));
+}
+
+void cNetwork::SendPacket(cPacket *Packet, stServerInfo *Target)
+{
+//	m_Interface->OutputConsoleString("Sending Packet: %i to %s:%i", Packet->GetTransit()->m_dwSequence, inet_ntoa(Target->m_saServer.sin_addr), htons(Target->m_saServer.sin_port));
+
+	BYTE *pbData = Packet->GetData();
+	int iLength = Packet->GetLength();
+
+	int tp = sendto(m_sSocket, (char *) pbData, iLength, NULL, (SOCKADDR *)&Target->m_saServer, sizeof( SOCKADDR ) );
+
+	//don't cache packets without a sequence number
+	//don't cache ping packets, they have a mirrored send sequence
+	//don't cache 0x100 packets, they have a mirrored send sequence
+	if (Packet->GetTransit()->m_dwSequence == 0 ||
+		Packet->GetTransit()->m_dwFlags & 4		||
+		Packet->GetTransit()->m_dwFlags & 0x100 ||
+		Packet->GetTransit()->m_dwFlags & 0x400)
+		delete Packet;
+	else
+	{
+		Lock();
+		Target->m_lSentPackets.push_back(Packet);
+		Target->m_dwLastPacketSent = GetTickCount();
+		Unlock();	
+	}
+}
+
+void cNetwork::SetInterface(cInterface *Interface)
+{
+	m_Interface = Interface;
+}
+
+void cNetwork::SetObjectDB(cObjectDB *ObjectDB)
+{
+	m_ObjectDB = ObjectDB;
+}
+
+void cNetwork::SetCharInfo(cCharInfo *CharInfo)
+{
+	m_CharInfo = CharInfo;
+}
+
+WORD cNetwork::GetTime()
+{
+	return (WORD)((GetTickCount() - m_dwStartTicks) / 500.0f);
+}
+
+void cNetwork::WakeServer(stServerInfo *Server)
+{
+	static BYTE PACKET_ONE[] =
+	{
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x08, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00
+	};
+	//sequence should be BLANK, probably need to put a CHECK here
+
+	for (int i=0;i<3;i++) {
+		cPacket *ConnPacket = new cPacket();
+		ConnPacket->Add(PACKET_ONE, sizeof(PACKET_ONE));
+		SendPacket(ConnPacket, Server);
+	}
+	Lock();
+	Server->m_saServer.sin_port = htons(ntohs(Server->m_saServer.sin_port)+1);
+	Unlock();
+	for (int i=0;i<3;i++) {
+		cPacket *ConnPacket = new cPacket();
+		ConnPacket->Add(PACKET_ONE, sizeof(PACKET_ONE));
+		SendPacket(ConnPacket, Server);
+	}
+	Lock();
+	Server->m_saServer.sin_port = htons(ntohs(Server->m_saServer.sin_port)-1);
+
+	Server->m_dwFlags |= SF_AWAKE;
+	Unlock();
+
+	m_Interface->OutputConsoleString("Waking %s...", inet_ntoa(Server->m_saServer.sin_addr));
+}
+
+void cNetwork::Connect()
+{
+	m_Interface->OutputConsoleString("--- New Session... Connecting... ---");
+
+	m_Interface->SetInterfaceMode(eConnecting);
+	m_Interface->SetConnProgress(0);
+
+	static BYTE PACKET_TWO_A[] = {//
+		/*SEQUENCE				FLAGS					CRC											*/
+		0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x52, 0xbd, 0x8e, 0x00, 0x00, 0x00, 0x00,
+		/*SIZE 			   		*/
+		0x46, 0x01, 0x00, 0x00 };
+		//Client Version
+		//0x0b, 0x00, 0x32, 0x30, 0x31, 0x31, 0x2e, 0x31, 0x30, 0x2e, 0x30, 0x30, 0x31, 0x00, 0x00, 0x00 };
+		//??  Hasn't changed in 8 years...
+//		0x02, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00,
+		//Changes every login it seems...  No idea...?
+//		0x68, 0xdb, 0xdb, 0x4f };
+		//then zone ticket
+
+	static BYTE PACKET_TWO_B[] = {
+		//Padding after ZN?...
+/*		0x00, 0x00, 0x00, 0x00,
+		//??  Didn't change at all from July->August patch...
+		0xf6, 0x00, 0x00, 0x00, 0x80,
+		//ticket size..?
+		0xf4,
+		//ticket - built below
+		0x6a, 0x41, 0x41, 0x41, 0x41, 0x41, 0x45, 0x43, 0x41, 0x41, 0x41, 0x42, 0x61, 0x41, 0x41, 0x41,
+		0x41, 0x4b, 0x51, 0x41, 0x41, 0x44, 0x41, 0x33, 0x44, 0x63, 0x66, 0x7a, 0x69, 0x55, 0x38, 0x36,
+		0x38, 0x39, 0x6f, 0x73, 0x6e, 0x62, 0x51, 0x76, 0x75, 0x30, 0x50, 0x44, 0x4f, 0x52, 0x55, 0x64,
+		0x39, 0x2b, 0x52, 0x51, 0x2b, 0x35, 0x45, 0x47, 0x2b, 0x30, 0x4d, 0x72, 0x76, 0x2b, 0x44, 0x52,
+		0x77, 0x51, 0x35, 0x6e, 0x6f, 0x78, 0x77, 0x6a, 0x6c, 0x6c, 0x48, 0x73, 0x51, 0x4b, 0x50, 0x54,
+		0x67, 0x53, 0x46, 0x6f, 0x4a, 0x48, 0x5a, 0x57, 0x6a, 0x4a, 0x70, 0x44, 0x57, 0x4c, 0x4a, 0x78,
+		0x4f, 0x30, 0x48, 0x6b, 0x4c, 0x68, 0x5a, 0x47, 0x41, 0x49, 0x71, 0x56, 0x48, 0x66, 0x53, 0x73,
+		0x63, 0x6a, 0x52, 0x67, 0x34, 0x6e, 0x53, 0x6e, 0x77, 0x58, 0x67, 0x6a, 0x38, 0x57, 0x68, 0x57,
+		0x72, 0x72, 0x35, 0x79, 0x71, 0x4a, 0x49, 0x74, 0x35, 0x5a, 0x36, 0x43, 0x6b, 0x33, 0x36, 0x56,
+		0x33, 0x62, 0x72, 0x50, 0x45, 0x42, 0x73, 0x2b, 0x50, 0x5a, 0x48, 0x4e, 0x2b, 0x63, 0x58, 0x70,
+		0x51, 0x4a, 0x73, 0x51, 0x6e, 0x45, 0x4b, 0x75, 0x4d, 0x38, 0x39, 0x75, 0x76, 0x39, 0x48, 0x6d,
+		0x4a, 0x49, 0x57, 0x54, 0x75, 0x79, 0x68, 0x2f, 0x69, 0x53, 0x4f, 0x39, 0x42, 0x30, 0x78, 0x4b,
+		0x49, 0x51, 0x41, 0x41, 0x41, 0x44, 0x49, 0x71, 0x4b, 0x65, 0x63, 0x38, 0x48, 0x47, 0x64, 0x35,
+		0x42, 0x55, 0x32, 0x41, 0x75, 0x4a, 0x7a, 0x44, 0x30, 0x78, 0x44, 0x75, 0x37, 0x38, 0x78, 0x75,
+		0x4a, 0x51, 0x63, 0x73, 0x78, 0x65, 0x6b, 0x30, 0x68, 0x42, 0x38, 0x6d, 0x50, 0x75, 0x51, 0x71,
+		0x4b, 0x67, 0x3d, 0x3d,*/
+		//??  Hasn't changed in 8 years...
+		0x1c, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x44, 0x84, 0x53, 0xbf, 0x15, 0x96, 0x26,
+		0xcc, 0xd9, 0xd0, 0x94, 0x28, 0x9e, 0x98, 0x23, 0xf3, 0x34, 0x60, 0x48, 0x15, 0x00, 0x00, 0x00
+	};
+
+	//Clear all connection stuff, incase of repeated connect attempts.
+	Reset();
+	//Awaken the connection before sending login data.
+	WakeServer(&m_siLoginServer);
+
+	m_siLoginServer.m_iSendSequence++;
+
+	for (int i=0;i<2;i++)
+	{
+		cPacket *LoginPacket = new cPacket();
+		LoginPacket->Add(PACKET_TWO_A, sizeof(PACKET_TWO_A));
+		LoginPacket->Add(std::string(CLIENT_VERSION));
+		LoginPacket->Add((DWORD) 0x40000002);
+		LoginPacket->Add((DWORD) 0);
+		LoginPacket->Add((DWORD) 0x4FDBDB68);
+		LoginPacket->Add(std::string(m_zAccountName));
+		LoginPacket->Add((DWORD) 0);
+		LoginPacket->Add((DWORD) 0x000000F6);
+		LoginPacket->Add((WORD) 0xF480);
+		LoginPacket->Add(m_zTicket, m_zTicketSize);
+		LoginPacket->Add(PACKET_TWO_B, sizeof(PACKET_TWO_B));
+
+		LoginPacket->Set(0x10, LoginPacket->GetLength() - 0x14);	//calc size (remove header from length)
+		SendLSPacket(LoginPacket, true, false);
+	}
+
+	m_siLoginServer.m_dwConnectAttempts++;
+	m_siLoginServer.m_dwLastConnectAttempt = GetTickCount();
+}
+
+void cNetwork::CloseConnection(stServerInfo *Server)
+{
+	static BYTE CLOSE_CONNECTION[] =
+	{
+		0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0xD4, 0x72, 0xF2, 0xBA, 0xD7, 0x01, 0x00, 0x00,
+		0x00, 0x00, 0x01, 0x00
+	};
+	cPacket *CloseClient = new cPacket();
+	CloseClient->Add(CLOSE_CONNECTION, sizeof(CLOSE_CONNECTION));
+
+	if (Server == &m_siLoginServer)
+		SendLSPacket(CloseClient, false, false);
+	else
+		SendWSPacket(CloseClient, Server, false, false);
+}
+
+void cNetwork::Disconnect()
+{
+	if (m_siLoginServer.m_dwFlags & SF_AWAKE) {
+		CloseConnection(&m_siLoginServer);
+
+		Lock();
+		m_siLoginServer.m_dwFlags &= ~SF_AWAKE;
+		Unlock();
+	}
+	for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
+	{
+		if (i->m_dwFlags & SF_AWAKE) {
+			CloseConnection(&*i);
+
+			Lock();
+			i->m_dwFlags &= ~SF_AWAKE;
+			Unlock();
+		}
+	}
+}
+
+void cNetwork::PingServer(stServerInfo *Server)
+{
+//	m_Interface->OutputConsoleString("Pinging %s:%i...", inet_ntoa(Server->m_saServer.sin_addr), ntohs(Server->m_saServer.sin_port));
+
+	static BYTE PING_PACKET[] = {
+		0x00, 0x00, 0x00, 0x00,
+		0x04, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00
+	};
+//	Lock();
+	memcpy(&PING_PACKET[20], &Server->m_dwRecvSequence, 4);
+//	Unlock();
+	cPacket *Ping = new cPacket;
+	Ping->Add(PING_PACKET, sizeof(PING_PACKET));
+	if (Server == &m_siLoginServer)
+		SendLSPacket(Ping, true, false);
+	else
+		SendWSPacket(Ping, Server, true, false);
+//	Lock();
+	Server->m_dwLastPing = GetTickCount();
+//	Unlock();
+}
+
+void cNetwork::SyncServer(stServerInfo *Server)
+{
+//	m_Interface->OutputConsoleString("Syncing with %s:%i...", inet_ntoa(Server->m_saServer.sin_addr), ntohs(Server->m_saServer.sin_port));
+
+	static BYTE SYNC_PACKET[] = {
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+	};
+
+//	Lock();
+	DWORD TimeDiff = (GetTickCount() - Server->m_dwLastSyncRecv);
+	double TimeEstimate = Server->m_flServerTime + (TimeDiff / 1000.0f);
+	Server->m_dwLastSyncSent = GetTickCount();
+//	Unlock();
+}
+
+void cNetwork::CheckPings()
+{
+	if (iConnPacketCount >= 10)
+	{
+		if (m_siLoginServer.m_dwLastPing < (GetTickCount() - 2000))
+		{
+			PingServer(&m_siLoginServer);
+		}
+
+		if ((m_siLoginServer.m_dwFlags & SF_CRCSEEDS) &&
+			(m_siLoginServer.m_dwFlags & SF_SYNC))
+		{
+			if (m_siLoginServer.m_dwLastSyncSent < (GetTickCount() - 2000))
+			{
+				SyncServer(&m_siLoginServer);
+			}
+		}
+
+		for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
+		{
+			stServerInfo j = *i;
+
+			if (j.m_dwLastPing < (GetTickCount() - 2000))
+			{
+				PingServer(&j);
+			}
+
+			if ((j.m_dwFlags & SF_CRCSEEDS) &&
+				(j.m_dwFlags & SF_SYNC))
+			{
+				if (j.m_dwLastSyncSent < (GetTickCount() - 2000))
+				{
+					SyncServer(&j);
+				}
+			}
+		}
+	}
+}
+
+void cNetwork::Run()
+{
+	//message loop for the network thread
+	while (!m_bQuit)
+	{
+		//keep trying to connect to login server if first time doesn't work
+		if (!(m_siLoginServer.m_dwFlags & SF_SHOOK))
+		{
+			if ((m_siLoginServer.m_dwLastConnectAttempt + 10000) < GetTickCount())
+			{
+				m_Interface->OutputConsoleString("Couldn't connect first time, trying again..");
+				Connect();
+			}
+		}
+
+		cPacket *Packet = new cPacket();
+		BYTE bRawData[1024];
+		SOCKADDR Target;
+
+		int siSize = sizeof( sockaddr_in );
+		int iRawSize = recvfrom( m_sSocket, (char *)bRawData, 1024, NULL, &Target, &siSize );
+		if (iRawSize == SOCKET_ERROR)
+			continue;
+
+		Packet->Add(bRawData, iRawSize);
+
+		if (SockCompare((SOCKADDR_IN *)&Target, &m_siLoginServer.m_saServer))
+		{
+			ProcessLSPacket(Packet);
+		}
+		else
+		{
+			//Check worldservers
+			bool bFound = false;
+			for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
+			{
+				if (SockCompare((SOCKADDR_IN *)&Target, &(*i).m_saServer))
+				{
+					bFound = true;
+					ProcessWSPacket(Packet, &(*i));
+				}
+			}
+
+			if (!bFound)
+			{
+				SOCKADDR_IN *tp = (SOCKADDR_IN *) &Target;
+
+				char tps[50];
+				char *tps2 = inet_ntoa(m_siLoginServer.m_saServer.sin_addr);
+				strcpy(tps, tps2);
+				m_Interface->OutputConsoleString("Unknown Target: %s:%i.  LS: %s:%i"
+					, inet_ntoa(tp->sin_addr)
+					, (int)ntohs(tp->sin_port)
+					, tps
+					, (int)ntohs(m_siLoginServer.m_saServer.sin_port));
+
+				delete Packet;
+			}
+		}
+
+		CheckPings();
+	}
+}
+
+void cNetwork::ProcessLSPacket(cPacket *Packet)
+{
+//	Lock();
+
+	stTransitHeader *Head = (stTransitHeader *) Packet->GetData();
+	BYTE *Data = Packet->GetData() + sizeof(stTransitHeader);
+	int iPos = 0;
+
+	//Update our received sequence, if necessary
+	if (Head->m_dwSequence > m_siLoginServer.m_dwRecvSequence)
+		m_siLoginServer.m_dwRecvSequence = Head->m_dwSequence;
+
+	DWORD dwType = Head->m_dwFlags;
+
+	if ((~m_siLoginServer.m_dwFlags & SF_SHOOK) || (Head->m_wTable != m_siLoginServer.m_wTable))
+	{
+		//Our 'table' ID isn't the same, are they telling us ours?
+		if ((~dwType & 0x00000080) && (~dwType & 0x00000100) && (~dwType & 0x00800000)
+			&& (~dwType & 0x00000800))
+		{
+			m_Interface->OutputConsoleString("LS: Wrong Table: Hooked: %i, Table: %04X/%04X, Type: %08X",
+				(int) (~m_siLoginServer.m_dwFlags & SF_SHOOK),
+				m_siLoginServer.m_wTable, Head->m_wTable,
+				dwType);
+			delete Packet;
+			return;
+		}
+	}
+
+	if (dwType & 0x00000001) { //Flags a packet that has been resent
+		dwType &= ~0x00000001;
+	}
+	if (dwType & 0x00002000) { //Server issued a close-connection request?
+		m_Interface->OutputConsoleString("Login server wants connection closed?");
+		dwType &= ~0x00002000;
+	}
+	if (dwType & 0x00100000) { //These are sent every 20 seconds, they DO increment sequence
+		double serverTime = *((double *)&Data[iPos]);
+		time_t sT = (DWORD) serverTime;
+		time_t offset = time(NULL) - sT;
+		char *woohoo = ctime(&offset);
+
+		m_siLoginServer.m_dwLastSyncRecv = GetTickCount();
+		m_siLoginServer.m_flServerTime = serverTime;
+		m_siLoginServer.m_dwFlags |= SF_SYNC;
+
+		dwType &= ~0x00100000;
+		iPos += 8;
+	}
+	if (dwType & 0x00200000) { //*Shrug* some DWORD and WORD
+		dwType &= ~0x00200000;
+		iPos += 6;
+	}
+	if (dwType & 0x00800000) { //Displays a server error
+		ServerLoginError( *((DWORD *)&Data[iPos]) );
+
+		dwType &= ~0x00800000;
+		iPos += 4;
+	}
+
+	switch (dwType)
+	{
+	case 0x00000000: //stripped packets
+		{
+			break;
+		}
+	case 0x00000002: //requests lost packets
+		{
+			DWORD packetCount = *((DWORD *)&Data[iPos]); iPos += 4;
+			for (int i = 0; i < (int)packetCount; i++)
+			{
+				DWORD packetSeq = *((DWORD *)&Data[iPos]); iPos += 4;
+				SendLostPacket(packetSeq, &m_siLoginServer);
+			}
+
+			break;
+		}
+	case 0x00000004: //ping
+		{
+			Lock();
+			DWORD serverSequence = *((DWORD *)&Data[iPos]);
+			if ((int)serverSequence < m_siLoginServer.m_iSendSequence)
+			{
+				//allow 1000 latency
+				if ((m_siLoginServer.m_dwLastPacketSent + 1000) < GetTickCount())
+				{
+					//server lost some packets
+					for (int i = serverSequence + 1; i <= m_siLoginServer.m_iSendSequence; i++)
+					{
+						SendLostPacket(i, &m_siLoginServer);
+					}
+				}
+			}
+			else if ((int)serverSequence > m_siLoginServer.m_iSendSequence)
+			{
+				m_Interface->OutputConsoleString("Login sequence is AHEAD of the client (previous connection?)");
+			}
+			Unlock();
+
+			break;
+		}
+	case 0x00000008: //declines requested packets
+
+		break;
+	case 0x00000040: //progress vial on left, maybe it calculates lag/ping/whatever ?
+		{
+			iConnPacketCount++;
+//			m_Interface->OutputConsoleString("Progress Packet!");
+
+			m_Interface->SetConnProgress(iConnPacketCount/10.0f);
+			static BYTE PROGRESSRESPONSE_PACKET[] =	{
+				0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0xfa, 0x71, 0xf9, 0xba, 0xdd, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00
+			};
+
+			cPacket *PResponse = new cPacket();
+			PResponse->Add(PROGRESSRESPONSE_PACKET, sizeof(PROGRESSRESPONSE_PACKET));
+			SendLSPacket(PResponse, false, false);
+			break;
+		}
+	case 0x00000080: //handshake - gives us our logical ID and table
+		{
+			if ( m_siLoginServer.m_dwFlags & SF_SHOOK )
+			{
+				//There shouldn't be two, put a debug message here
+			}
+			m_siLoginServer.m_wTable = Head->m_wTable;
+
+			m_siLoginServer.m_dwLastSyncRecv = GetTickCount();
+			m_siLoginServer.m_flServerTime = *((double *)&Data[iPos]); //Time sync
+			iPos += sizeof(double);
+
+			if (*((DWORD *)&Data[iPos]) != 0x00)
+			{	// Improper, but safe to assume its a version string
+				DWORD versionSize = *((DWORD *)&Data[iPos]);
+				iPos += 4;
+				char *serverVersion = new char[versionSize];
+				memcpy(serverVersion, &Data[iPos], versionSize);
+				iPos += versionSize;
+				if (strcmp(CLIENT_VERSION, serverVersion))
+				{
+					char text[500];
+					sprintf(text, "Client version: %s Server version: %s", CLIENT_VERSION, serverVersion);
+					MessageBox(NULL, text, "Error", MB_OK);
+					delete []serverVersion;
+					Disconnect();
+					break;
+				}
+				delete []serverVersion;
+			}
+
+			iPos += 8; //blank DWORDs
+
+			m_siLoginServer.m_wLogicalID = *((WORD *)&Data[iPos]);
+			m_siLoginServer.m_dwFlags |= SF_SHOOK;
+			iPos += 2;
+
+			DWORD versionSize = *((DWORD *)&Data[iPos]);
+			iPos += 4;
+			char *serverVersion = new char[versionSize];
+			memcpy(serverVersion, &Data[iPos], versionSize);
+			iPos += versionSize;
+			m_Interface->OutputConsoleString("Server Version: %s, Table: %04X", serverVersion, m_siLoginServer.m_wTable);
+			delete []serverVersion;
+			
+			//Screw the buffer position, we'll make a few assumptions for now
+			DWORD input8[8];
+			DWORD input3[3];
+			memcpy(input8, &Data[0x32], 8 * sizeof(DWORD));
+			memcpy(input3, &Data[0x5A], 3 * sizeof(DWORD));
+			DWORD *seeds = DecryptSeeds(input8, input3);
+			m_siLoginServer.m_dwRecvCRCSeed = seeds[0];
+			m_siLoginServer.m_dwSendCRCSeed = seeds[1];
+			m_siLoginServer.m_pdwRecvCRC	= m_siLoginServer.m_lpdwRecvCRC;
+			m_siLoginServer.m_pdwSendCRC	= m_siLoginServer.m_lpdwSendCRC;
+			GenerateCRCs(m_siLoginServer.m_dwSendCRCSeed, m_siLoginServer.m_dwRecvCRCSeed, m_siLoginServer.m_pdwSendCRC, m_siLoginServer.m_pdwRecvCRC);
+			m_siLoginServer.m_dwFlags |= SF_CRCSEEDS;
+
+			static BYTE HANDSHAKE_PACKET[] = {
+				0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0xf5, 0x71, 0xf4, 0xba, 0x98, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00
+			};
+			cPacket *Handshake = new cPacket();
+			Handshake->Add(HANDSHAKE_PACKET, sizeof(HANDSHAKE_PACKET));
+			SendLSPacket(Handshake, false, false);
+			break;
+		}
+	case 0x00000100: //update CRC
+		m_Interface->OutputConsoleString("Received 0x100 on login server?");
+		break;
+	case 0x00000200: //game-related messages
+
+		//Loop through the fragments
+		while ((iPos + sizeof(stFragmentHeader)) < Head->m_wSize)
+		{
+			stFragmentHeader *FragHead	= (stFragmentHeader *)&Data[iPos];
+			BYTE *FragData				= sizeof(stFragmentHeader) + &Data[iPos];
+			iPos += FragHead->m_wSize;
+
+			if (FragHead->m_wCount == 1)
+			{
+				cMessage *Msg = new cMessage(FragData, FragHead);
+				ProcessMessage(Msg, &m_siLoginServer);
+			}
+			else
+			{
+				if (m_siLoginServer.m_lIncomingMessages.size() > 0)
+				{
+					//Check for existing fragments
+					bool bAdded = false;
+					std::list< cMessage * >::iterator it;
+					for (it = m_siLoginServer.m_lIncomingMessages.begin(); it != m_siLoginServer.m_lIncomingMessages.end(); it++)
+					{
+						if (bAdded)
+							break;
+
+						cMessage *scan = *it;
+						if ( scan->m_dwSequence == FragHead->m_dwSequence)
+						{
+							scan->AddChunk(FragData, FragHead->m_wSize - sizeof(stFragmentHeader), FragHead->m_wIndex);
+							bAdded = true;
+
+							if ( scan->IsComplete() )
+							{
+								ProcessMessage(scan, &m_siLoginServer);
+								m_siLoginServer.m_lIncomingMessages.erase(it);
+							}
+							break;
+						}
+					}
+
+					//No existing group matches, create one
+					if (!bAdded) //(it == m_siLoginServer.m_lIncomingMessages.end() )
+					{
+						cMessage *Msg = new cMessage(FragData, FragHead);
+						m_siLoginServer.m_lIncomingMessages.push_back(Msg);
+					}
+				}
+				else
+				{
+					cMessage *Msg = new cMessage(FragData, FragHead);
+					m_siLoginServer.m_lIncomingMessages.push_back(Msg);
+				}
+			}
+		}
+		break;
+	case 0x00000800: //login server redirect
+		Reset();
+
+		SOCKADDR_IN tp;
+		memcpy(&tp, Data, sizeof(SOCKADDR_IN));
+
+		char tps[50];
+		strcpy(tps, inet_ntoa(m_siLoginServer.m_saServer.sin_addr));
+		m_Interface->OutputConsoleString("Login Redirect: %s:%i -> %s:%i",
+								  tps,
+								  (int)ntohs(m_siLoginServer.m_saServer.sin_port),
+								  inet_ntoa(tp.sin_addr),
+								  (int)ntohs(tp.sin_port) );
+
+		memcpy(&m_siLoginServer.m_saServer, Data, sizeof(SOCKADDR_IN));
+		Connect();
+		break;
+	case 0x00020000:
+		{
+			SOCKADDR_IN tpaddr;
+			memcpy(&tpaddr, Data, sizeof(tpaddr));
+			DWORD dwAck = *((DWORD *) (Data+sizeof(tpaddr)));
+
+			char tps[50];
+			strcpy(tps, inet_ntoa(tpaddr.sin_addr));
+			if (!m_pActiveWorld)
+				m_Interface->OutputConsoleString("LS: Setting Worldserver: %s:%i...", tps, ntohs(tpaddr.sin_port));
+			else
+				m_Interface->OutputConsoleString("LS: Worldserver Redirect: %s:%i->%s:%i...", inet_ntoa(m_pActiveWorld->m_saServer.sin_addr), ntohs(m_pActiveWorld->m_saServer.sin_port), tps, ntohs(tpaddr.sin_port));
+			AddWorldServer(tpaddr);
+			SetActiveWorldServer(tpaddr);
+
+			//Now tell LS that we've added it
+			BYTE acceptServer[] =
+			{
+				0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x02, 0x00,
+				0x00, 0x00, 0x00, 0x00, 
+				0x40, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00
+//				,0x5c, 0x00, 0x00, 0x00
+			};
+
+			for (int i=0; i<4; i++)
+			{
+				//gotta do this shit 4 times
+				WakeServer(m_pActiveWorld);
+
+				cPacket *AcceptServer = new cPacket();
+				AcceptServer->Add(acceptServer, sizeof(acceptServer));
+				AcceptServer->Add(dwAck);
+				SendLSPacket(AcceptServer, false, false);
+			}
+
+			break;
+		}
+	default:
+		m_Interface->OutputConsoleString("LS: Unknown Packet Type: %08X", dwType);
+		break;
+	}
+
+	delete Packet;
+}
+
+void cNetwork::ProcessWSPacket(cPacket *Packet, stServerInfo *Server)
+{
+//	m_Interface->OutputConsoleString("Worldserver Packet...");
+	stTransitHeader *Head = (stTransitHeader *) Packet->GetData();
+	BYTE *Data = Packet->GetData() + sizeof(stTransitHeader);
+	int iPos = 0;
+
+	//Update our received sequence, if necessary
+	if (Head->m_dwSequence > Server->m_dwRecvSequence)
+		Server->m_dwRecvSequence = Head->m_dwSequence;
+
+	DWORD dwType = Head->m_dwFlags;
+
+	if ((~Server->m_dwFlags & SF_SHOOK) || Head->m_wTable != Server->m_wTable)
+	{
+		//Our 'table' ID isn't the same, are they telling us ours?
+		if ((~dwType & 0x00000080) && (~dwType & 0x00000100))
+		{
+			m_Interface->OutputConsoleString("WS (%s:%i): Wrong Table: Hooked: %i, Table: %04X/%04X, Type: %08X",
+				inet_ntoa(Server->m_saServer.sin_addr), htons(Server->m_saServer.sin_port), 
+				(int) (~Server->m_dwFlags & SF_SHOOK),
+				Server->m_wTable, Head->m_wTable,
+				dwType);
+//			m_Interface->OutputConsoleString("Packet from wrong server??");
+			delete Packet;
+			return;
+		}
+	}
+
+//	m_Interface->OutputConsoleString("Sequence: %04X Packet: %04X", Head->m_dwSequence, dwType);
+
+	if (dwType & 0x00000001) { //Flags a packet that has been resent
+		dwType &= ~0x00000001;
+	}
+	if (dwType & 0x00002000) { //Server issued a close-connection request?
+		m_Interface->OutputConsoleString("WS (%s:%i): Wants connection closed?  Closing!",
+			inet_ntoa(Server->m_saServer.sin_addr), htons(Server->m_saServer.sin_port)
+			);
+		dwType &= ~0x00002000;
+		
+		CloseConnection(Server);
+	}
+	if (dwType & 0x00100000) { //These are sent every 20 seconds, they DO increment sequence
+		double serverTime = *((double *)&Data[iPos]);
+		time_t sT = (DWORD) serverTime;
+		time_t offset = time(NULL) - sT;
+		char *woohoo = ctime(&offset);
+
+		Server->m_dwLastSyncRecv = GetTickCount();
+		Server->m_flServerTime = serverTime;
+		Server->m_dwFlags |= SF_SYNC;
+
+		dwType &= ~0x00100000;
+		iPos += 8;
+	}
+	if (dwType & 0x00200000) { //*Shrug* some DWORD and WORD
+		dwType &= ~0x00200000;
+		iPos += 6;
+	}
+	if (dwType & 0x00800000) { //Displays a server error
+		ServerLoginError( *((DWORD *)&Data[iPos]) );
+
+		dwType &= ~0x00800000;
+		iPos += 4;
+	}
+
+	switch (dwType)
+	{
+	case 0x00000000: //stripped packets
+		{
+			break;
+		}
+	case 0x00000002: //requests lost packets
+		{
+//			m_Interface->OutputConsoleString("Lost packet requested by server.");
+//			DWORD seqAsked = *((DWORD *)&Data[iPos]);
+//			SendLostPacket(seqAsked, Server);
+			DWORD packetCount = *((DWORD *)&Data[iPos]); iPos += 4;
+			for (int i = 0; i < (int)packetCount; i++)
+			{
+				DWORD packetSeq = *((DWORD *)&Data[iPos]); iPos += 4;
+				SendLostPacket(packetSeq, Server);
+			}
+
+			break;
+		}
+	case 0x00000004: //ping
+		{
+			Lock();
+			DWORD serverSequence = *((DWORD *)&Data[iPos]);
+			if ((int)serverSequence < Server->m_iSendSequence)
+			{
+				//allow 1000 latency
+				if ((Server->m_dwLastPacketSent + 1000) < GetTickCount())
+				{
+					//server lost some packets
+					for (int i = serverSequence + 1; i <= Server->m_iSendSequence; i++)
+					{
+						SendLostPacket(i, Server);
+					}
+				}
+			}
+			else if ((int)serverSequence > Server->m_iSendSequence)
+			{
+				m_Interface->OutputConsoleString("World sequence is AHEAD of the client (WTF?)");
+			}
+			Unlock();
+
+			break;
+		}
+	case 0x00000008: //declines requested packets
+
+		break;
+	case 0x00000100: //update CRC
+		{
+			Server->m_wTable = Head->m_wTable;
+			Server->m_wLogicalID = *((WORD *)&Data[0x0]);
+			Server->m_dwFlags |= SF_SHOOK;
+			DWORD input8[8];
+			DWORD input3[3];
+			memcpy(input8, &Data[0x12], 8 * sizeof(DWORD));
+			memcpy(input3, &Data[0x3A], 3 * sizeof(DWORD));
+			DWORD *seeds = DecryptSeeds(input8, input3);
+			Server->m_dwRecvCRCSeed = seeds[0];
+			Server->m_dwSendCRCSeed = seeds[1];
+			Server->m_pdwRecvCRC	= Server->m_lpdwRecvCRC;
+			Server->m_pdwSendCRC	= Server->m_lpdwSendCRC;
+			GenerateCRCs(Server->m_dwSendCRCSeed, Server->m_dwRecvCRCSeed, Server->m_pdwSendCRC, Server->m_pdwRecvCRC);
+			Server->m_dwFlags |= SF_CRCSEEDS;
+
+			m_Interface->OutputConsoleString("WS (%s:%i): New seeds set.  Table: %04X",
+				inet_ntoa(Server->m_saServer.sin_addr), htons(Server->m_saServer.sin_port), 
+				Server->m_wTable);
+
+			static BYTE acceptSeeds[] = {
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00
+			};
+			cPacket *Ack100 = new cPacket();
+			Ack100->Add(acceptSeeds, sizeof(acceptSeeds));
+			SendWSPacket(Ack100, Server, true, false);
+
+			break;
+		}
+	case 0x00000200: //game-related messages
+
+		//Loop through the fragments
+		while ((iPos + sizeof(stFragmentHeader)) < Head->m_wSize)
+		{
+			stFragmentHeader *FragHead	= (stFragmentHeader *)&Data[iPos];
+			BYTE *FragData				= sizeof(stFragmentHeader) + &Data[iPos];
+			iPos += FragHead->m_wSize;
+
+			if (FragHead->m_wCount == 1)
+			{
+				cMessage *Msg = new cMessage(FragData, FragHead);
+				ProcessMessage(Msg, Server);
+			}
+			else
+			{
+				//Check for existing fragments
+				if (Server->m_lIncomingMessages.size() > 0)
+				{
+					bool bAdded = false;
+					std::list< cMessage * >::iterator it;
+					for (it = Server->m_lIncomingMessages.begin(); it != Server->m_lIncomingMessages.end(); it++)
+					{
+						if (bAdded)
+							break;
+
+						cMessage *scan = *it;
+						if ( scan->m_dwSequence == FragHead->m_dwSequence)
+						{
+							bAdded = true;
+							scan->AddChunk(FragData, FragHead->m_wSize - sizeof(stFragmentHeader), FragHead->m_wIndex);
+							
+							if ( scan->IsComplete() )
+							{
+								ProcessMessage(scan, Server);
+								Server->m_lIncomingMessages.erase(it);
+							}
+							break;
+						}
+					}
+
+					//No existing group matches, create one
+					if (!bAdded) //(it == Server->m_lIncomingMessages.end() )
+					{
+						cMessage *Msg = new cMessage(FragData, FragHead);
+						Server->m_lIncomingMessages.push_back(Msg);
+					}
+				}
+				else
+				{
+					cMessage *Msg = new cMessage(FragData, FragHead);
+					Server->m_lIncomingMessages.push_back(Msg);
+				}
+			}
+		}
+		break;
+	case 0x00000400: //wtf?
+		{
+			static BYTE acceptWTF[] = {
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00
+			};
+			cPacket *Ack400 = new cPacket();
+			Ack400->Add(acceptWTF, sizeof(acceptWTF));
+			SendWSPacket(Ack400, Server, false, false);
+			m_Interface->OutputConsoleString("Set output server to %s:%i...", inet_ntoa(Server->m_saServer.sin_addr), ntohs(Server->m_saServer.sin_port));
+
+			SetActiveWorldServer(Server->m_saServer);
+
+			//no idea if this is what i should do
+			double serverTime = *((double *)&Data[iPos]);
+			m_pActiveWorld->m_dwLastSyncRecv = GetTickCount();
+			m_pActiveWorld->m_flServerTime = serverTime;
+			m_pActiveWorld->m_dwFlags |= SF_SYNC;
+			break;
+		}
+	case 0x00010000:
+		{
+			//data: 0BAD70DD  (bad todd)
+
+			m_Interface->OutputConsoleString("10000 from %s:%i..", inet_ntoa(Server->m_saServer.sin_addr), ntohs(Server->m_saServer.sin_port));
+
+/*			DWORD dataSize = Packet->GetLength() - sizeof(stTransitHeader);
+			BYTE *data = Packet->GetData() + sizeof(stTransitHeader);
+			m_Interface->OutputConsoleString("10000: Contents:");
+			for (DWORD i = 0; i <= ((dataSize - (dataSize % 16)) / 16); i++)
+			{
+				char valbuff[128]; memset(valbuff, 0, 128);
+				char linebuff[128]; memset(linebuff, 0, 128);
+				char strbuff[128]; memset(strbuff, 0, 128);
+
+				strcat(strbuff, "; ");
+				for (DWORD j = i * 16; (j < ((i+1)*16)) && (j < dataSize); j++)
+				{
+					sprintf(valbuff, "%.1s", &data[j]);
+					strcat(strbuff, valbuff);
+					sprintf(valbuff, "%02X ", data[j]);
+					strcat(linebuff, valbuff);
+				}
+				strcat(linebuff, strbuff);
+				m_Interface->OutputConsoleString("%s", linebuff);
+			}*/
+
+			break;
+		}
+	case 0x00020000:
+		{
+			SOCKADDR_IN tpaddr;
+			memcpy(&tpaddr, Data, sizeof(tpaddr));
+			DWORD dwAck = *((DWORD *) (Data+sizeof(tpaddr)));
+
+			char outt[50];
+			strcpy(outt, inet_ntoa(m_pActiveWorld->m_saServer.sin_addr));
+			m_Interface->OutputConsoleString("WS: Worldserver Redirect: %s:%i->%s:%i...", outt, ntohs(m_pActiveWorld->m_saServer.sin_port), inet_ntoa(tpaddr.sin_addr), ntohs(tpaddr.sin_port));
+			stServerInfo *newserv = AddWorldServer(tpaddr);
+//			SetActiveWorldServer(tpaddr);
+
+			//woo, trying this out my ass...
+			newserv->m_dwLastSyncRecv = Server->m_dwLastSyncRecv;
+			newserv->m_flServerTime = Server->m_flServerTime;
+			if (Server->m_dwFlags & SF_SYNC)
+				newserv->m_dwFlags |= SF_SYNC;
+
+			//Now tell Last WS that we've added it
+			BYTE acceptServer[] =
+			{
+				0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x02, 0x00,
+				0x00, 0x00, 0x00, 0x00, 
+				0x40, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00
+//				,0x5c, 0x00, 0x00, 0x00
+			};
+
+			WakeServer(newserv);
+
+			//Tell the last worldserver we're acking it
+			cPacket *AcceptServer = new cPacket();
+			AcceptServer->Add(acceptServer, sizeof(acceptServer));
+			AcceptServer->Add(dwAck);
+			SendWSPacket(AcceptServer, Server, false, false);
+
+			break;
+		}
+	default:
+		m_Interface->OutputConsoleString("WS: Unknown Packet Type: %08X", dwType);
+		break;
+	}
+
+	delete Packet;
+}
+
+void cNetwork::Stop()
+{
+	Disconnect();
+	WSACleanup();
+	closesocket(m_sSocket);
+	cThread::Stop();
+ }
+
+void cNetwork::ServerLoginError(DWORD Error)
+{
+	//these will usually occur at the connection phase
+	switch (Error)
+	{
+	case 0x04:
+		m_Interface->OutputConsoleString("Client: Your zone ticket expired before reaching the server.");
+		break;
+	default:
+		m_Interface->OutputConsoleString("Client: Received login error #%u.", Error);
+		break;
+	}
+}
+
+void cNetwork::ServerCharCreateError(DWORD Error)
+{
+	//these will occur when logging in or creating a character
+	switch(Error)
+	{
+	case 0x03:
+		m_Interface->OutputConsoleString("The name you have chosen for your character is already in use by another character.");
+		break;
+	case 0x04:
+		m_Interface->OutputConsoleString("Sorry, but that name is not permitted.");
+		break;
+	case 0x05:
+		m_Interface->OutputConsoleString("The server has found an unexplained error with this new character.  The data may be corrupt or out of date.");
+		break;
+	case 0x06:
+		m_Interface->OutputConsoleString("The server cannot create your new character at this time. Please try again later.");
+		break;
+	case 0x07:
+		m_Interface->OutputConsoleString("Sorry, but you do not have the privileges to make an administrator character.");
+		break;
+	default:
+		m_Interface->OutputConsoleString("Client: Character creation error #%u", Error);
+		break;
+	}
+}
+
+void cNetwork::ServerCharacterError(DWORD Error)
+{
+	//these will occur when logging in or creating a character
+	switch(Error)
+	{
+	case 0x01:
+		m_Interface->OutputConsoleString("Cannot have two accounts logged on at the same time.");
+		break;
+	case 0x03:
+		m_Interface->OutputConsoleString("Server could not access your account information. Please try again in a few minutes.");
+		break;
+	case 0x04:
+		m_Interface->OutputConsoleString("The server has disconnected. Please try again in a few minutes.");
+		break;
+	case 0x05:
+		m_Interface->OutputConsoleString("Server could not log off your character.");
+		break;
+	case 0x06:
+		m_Interface->OutputConsoleString("Server could not delete your character.");
+		break;
+	case 0x08:
+		m_Interface->OutputConsoleString("The account you specified is already in use.");
+		break;
+	case 0x09:
+		m_Interface->OutputConsoleString("The account name you specified was not valid.");
+		break;
+	case 0x0A:
+		m_Interface->OutputConsoleString("The account you specified doesn't exist.");
+		break;
+	case 0x0B:
+		m_Interface->OutputConsoleString("Server could not put your character in the game. Please try again in a few minutes.");
+		break;
+	case 0x0C:
+		m_Interface->OutputConsoleString("You cannot enter the game with a stress creating character.");
+		break;
+	case 0x0D:
+		m_Interface->OutputConsoleString("One of your characters is still in the world. Please try again in a few minutes.");
+		break;
+	case 0x0E:
+		m_Interface->OutputConsoleString("Server unable to find player account. Please try again later.");
+		break;
+	case 0x0F:
+		m_Interface->OutputConsoleString("You do not own this character.");
+		break;
+	case 0x10:
+		m_Interface->OutputConsoleString("One of your characters is currently in the world. Please try again later. This is likely an internal server error.");
+		break;
+	case 0x11:
+		m_Interface->OutputConsoleString("Please try again in a few minutes. If this problem persists, the character might be out of date and no longer usable.");
+		break;
+	case 0x12:
+		m_Interface->OutputConsoleString("This character's data has been corrupted. Please delete it and create a new character.");
+		break;
+	case 0x13:
+		m_Interface->OutputConsoleString("This character's starting server is experiencing difficulties. Please try again in a few minutes.");
+		break;
+	case 0x14:
+		m_Interface->OutputConsoleString("This character couldn't be placed in the world right now. Please try again in a few minutes.");
+		break;
+	case 0x15:
+		m_Interface->OutputConsoleString("Sorry, but the Asheron's Call server is full currently. Please try again later.");
+		break;
+	case 0x17:
+		m_Interface->OutputConsoleString("A save of this character is still in progress, please try again later.");
+		break;
+	default:
+		m_Interface->OutputConsoleString("Client: Received character error #%u", Error);
+		break;
+	}
+}
+
+//Is the server information even needed? *shrug*
+void cNetwork::ProcessMessage(cMessage *Msg, stServerInfo *Server)
+{
+	Msg->ReadBegin();
+
+	DWORD dwType = Msg->ReadDWORD();
+//	m_Interface->OutputConsoleString("Message: %04X", dwType);
+
+	switch ( dwType ) //Message Type
+	{
+	case 0x0024:
+		{
+			//destroy object
+			m_ObjectDB->DeleteObject(Msg->ReadDWORD());
+			break;
+		}
+	case 0x0197:
+		{
+			//adjust stack size
+			BYTE sequence = Msg->ReadByte();
+			DWORD item = Msg->ReadDWORD();
+			DWORD count = Msg->ReadDWORD();
+			DWORD value = Msg->ReadDWORD();
+
+			cWObject *tpObj = m_ObjectDB->FindObject(item);
+			if (!tpObj)
+				return;
+			tpObj->AdjustStack(count, value);
+			break;
+		}
+	case 0x019E:
+		{
+			//player kill
+			char * text = Msg->ReadString();
+			DWORD killee = Msg->ReadDWORD();
+			DWORD killer = Msg->ReadDWORD();
+
+			m_Interface->OutputString(eRed, "%s", text);
+
+			delete []text;
+			break;
+		}
+	case 0x01E0:
+		{
+			//indirect text
+			DWORD sender = Msg->ReadDWORD();
+			char *senderName = Msg->ReadString();
+			char *text = Msg->ReadString();
+
+			m_Interface->OutputString(eWhite, "Indirect: %s, %s", senderName, text);
+
+			delete []text;
+			delete []senderName;
+			break;
+		}
+	case 0x01E2:
+		{
+			//emote text
+			DWORD sender = Msg->ReadDWORD();
+			char *senderName = Msg->ReadString();
+			char *text = Msg->ReadString();
+
+			m_Interface->OutputString(eWhite, "Emote: %s, %s", senderName, text);
+
+			delete []text;
+			delete []senderName;
+			break;
+		}
+	case 0x02BB:
+		{
+			//chat window message
+			char *text = Msg->ReadString();
+			char *senderName = Msg->ReadString();
+			DWORD sender = Msg->ReadDWORD();
+			eColor type = (eColor) Msg->ReadDWORD();
+
+			m_Interface->OutputString(eRed, "<%s> %s", senderName, text);
+
+			delete []text;
+			delete []senderName;
+			break;
+		}
+	case 0x02BC:
+		{
+			//chat window message (ranged)
+			char *text = Msg->ReadString();
+			char *senderName = Msg->ReadString();
+			DWORD sender = Msg->ReadDWORD();
+			float range = Msg->ReadFloat();
+			eColor type = (eColor) Msg->ReadDWORD();
+
+			m_Interface->OutputString(type, "Ranged (%f): <%s> %s", range, senderName, text);
+
+			delete []text;
+			delete []senderName;
+			break;
+		}
+	case 0x02CD:
+		{
+			//set Character DWORD
+			BYTE sequence = Msg->ReadByte();
+			DWORD key = Msg->ReadDWORD();
+			DWORD value = Msg->ReadDWORD();
+            
+			m_CharInfo->UpdateStatisticDW(key, value);
+			break;
+		}
+	case 0x02CE:
+		{
+			//set Object DWORD
+			BYTE sequence = Msg->ReadByte();
+			DWORD object = Msg->ReadDWORD();
+			DWORD key = Msg->ReadDWORD();
+			DWORD value = Msg->ReadDWORD();
+
+			//do something with this eventually...
+			break;
+		}
+	case 0x02CF:
+		{
+			//set Character QWORD
+			BYTE sequence = Msg->ReadByte();
+			DWORD key = Msg->ReadDWORD();
+			QWORD value = Msg->ReadQWORD();
+            
+			m_CharInfo->UpdateStatisticQW(key, value);
+			break;
+		}
+	case 0x02D1:
+		{
+			//set Character Boolean
+			BYTE sequence = Msg->ReadByte();
+			DWORD key = Msg->ReadDWORD();
+			DWORD value = Msg->ReadDWORD();
+
+			m_CharInfo->UpdateStatisticBool(key, (value == 1));
+			break;
+		}
+	case 0x02D2:
+		{
+			//set Object Boolean
+			BYTE sequence = Msg->ReadByte();
+			DWORD object = Msg->ReadDWORD();
+			DWORD key = Msg->ReadDWORD();
+			DWORD value = Msg->ReadDWORD();
+
+			//do something with this eventually...
+			break;
+		}
+	case 0x02D6:
+		{
+			//set Object String
+			BYTE sequence = Msg->ReadByte();
+			DWORD key = Msg->ReadDWORD();
+			DWORD object = Msg->ReadDWORD();
+			Msg->ReadAlign();
+			char * value = Msg->ReadString();
+
+			//do something with this eventually...
+
+			delete []value;
+			break;
+		}
+	case 0x02D8:
+		{
+			//set Object Resource
+			BYTE sequence = Msg->ReadByte();
+			DWORD object = Msg->ReadDWORD();
+			DWORD key = Msg->ReadDWORD();
+			DWORD value = Msg->ReadDWORD();
+
+			//do something with this eventually...
+			break;
+		}
+	case 0x02D9:
+		{
+			//set Character Link
+			BYTE sequence = Msg->ReadByte();
+			DWORD key = Msg->ReadDWORD();
+			DWORD value = Msg->ReadDWORD();
+
+			switch (key)
+			{
+			case 0x0B:
+				m_Interface->SetLastAttacker(value);
+				break;
+			//fill in the rest of this
+			};
+
+			break;
+		}
+	case 0x02DA:
+		{
+			//set Object Link
+			BYTE sequence = Msg->ReadByte();
+			DWORD object = Msg->ReadDWORD();
+			DWORD key = Msg->ReadDWORD();
+			DWORD value = Msg->ReadDWORD();
+
+			//do something with this eventually
+			break;
+		}
+	case 0x02DB:
+		{
+			//set player location info
+			BYTE sequence = Msg->ReadByte();
+			DWORD key = Msg->ReadDWORD();
+
+			if (key == 0x0E)
+			{
+				//last corpse location
+
+				stLocation tploc;
+				memcpy(&tploc, Msg->ReadGroup(sizeof(stLocation)), sizeof(stLocation));
+				m_CharInfo->AddCorpse(tploc);
+			}
+			break;
+		}
+	case 0x02DD:
+		{
+			//set character skill level
+			BYTE sequence = Msg->ReadByte();
+			DWORD skill = Msg->ReadDWORD();
+			WORD raised = Msg->ReadWORD();
+			WORD unknown1 = Msg->ReadWORD();
+			DWORD trained = Msg->ReadDWORD();
+			DWORD xp = Msg->ReadDWORD();
+			DWORD bonus = Msg->ReadDWORD();
+			DWORD diff = Msg->ReadDWORD();
+			QWORD unknown2 = Msg->ReadQWORD();
+
+			m_CharInfo->UpdateSkill(skill, raised, trained, xp, bonus);
+			break;
+		}
+
+	case 0x02E1:
+		{
+			//set character skill train state
+			BYTE sequence = Msg->ReadByte();
+			DWORD skill = Msg->ReadDWORD();
+			DWORD skillTrained = Msg->ReadDWORD();
+
+			m_CharInfo->UpdateSkillTrain(skill, skillTrained);
+			break;
+		}
+
+	case 0x02E3:
+		{
+			//update character attribute
+			BYTE sequence = Msg->ReadByte();
+			DWORD Attribute = Msg->ReadDWORD();
+			DWORD NewIncrement = Msg->ReadDWORD();
+			DWORD StartingValue = Msg->ReadDWORD();
+			DWORD TotalAppliedXP = Msg->ReadDWORD();
+			m_CharInfo->UpdateAttribute(Attribute, NewIncrement, StartingValue, TotalAppliedXP);
+			break;
+		}
+	case 0x02E7:
+		{
+			//update character vital
+			BYTE sequence = Msg->ReadByte();
+			DWORD Attribute = Msg->ReadDWORD();
+			DWORD PointsAdded = Msg->ReadDWORD();
+			DWORD unknown1 = Msg->ReadDWORD();
+			DWORD TotalAppliedXP = Msg->ReadDWORD();
+			DWORD unknown2 = Msg->ReadDWORD();
+			m_CharInfo->UpdateSecondaryAttribute(Attribute, PointsAdded, TotalAppliedXP);
+			break;
+		}
+	case 0x02E9:
+		{
+			//update character current vital
+			BYTE sequence = Msg->ReadByte();
+			DWORD vital = Msg->ReadDWORD();
+			DWORD value = Msg->ReadDWORD();
+			m_CharInfo->UpdateVital(vital, value);
+			break;
+		}
+	case 0xF619:
+		{
+			//lifestone recall
+
+			//not going to bother right now...
+			break;
+		}
+	case 0xF625:
+		{
+			//change model
+			DWORD object = Msg->ReadDWORD();
+			cWObject *woThis = m_ObjectDB->FindObject(object);
+			if (!woThis)
+			{
+				m_ObjectDB->Unlock();
+				return;
+			}
+			woThis->ParseF625(Msg);
+			WORD modelSequenceType = Msg->ReadWORD();
+			WORD modelSequence = Msg->ReadWORD();
+			break;
+		}
+	case 0xF643:
+		{
+			//Character Create Result
+			DWORD dwResult	= Msg->ReadDWORD();
+
+			if (dwResult == 1)
+				m_Interface->OutputConsoleString("Character successfully created.");
+			else
+				ServerCharCreateError(dwResult);
+			break;
+		}
+	case 0xF653:
+		{
+			//End 3D Mode
+			m_Interface->OutputConsoleString("End 3D Mode.");
+
+			m_Interface->SetInterfaceMode(eMOTD);
+			break;
+		}
+	case 0xF655:
+		{
+			//Char Deletion
+			break;
+		}
+	case 0xF658:
+		{
+			//Character List
+			stCharList CharList;
+			ZeroMemory(&CharList, sizeof(CharList));
+
+			Msg->ReadDWORD();	//unknown1
+			CharList.CharCount = Msg->ReadDWORD();		//characterCount
+			for (int i=0;i<CharList.CharCount;i++)		//characters *Vector*
+			{
+				stCharList::CharInfo tpChar;
+				tpChar.GUID = Msg->ReadDWORD();				//character
+				char *tpName = Msg->ReadString();			//name
+				strcpy(tpChar.Name, tpName);
+				delete []tpName;
+				tpChar.DelTimeout = Msg->ReadDWORD();		//deleteTimeout
+				CharList.Chars.push_back(tpChar);
+			}
+
+			DWORD unknown2 = Msg->ReadDWORD();			//0?
+			CharList.CharSlots = Msg->ReadDWORD();		//slotCount - 0x0b
+			
+			char *zoneName = Msg->ReadString();			//read Zone Name (WORD len + string)
+			CharList.ZoneName = std::string(zoneName);
+			delete []zoneName;
+
+			DWORD turbineChatEnabled = Msg->ReadDWORD();	//0x00010000
+			DWORD unknown3 = Msg->ReadDWORD();				//0x00010000
+
+
+			m_Interface->SetCharList(&CharList);
+			m_Interface->SetInterfaceMode(eMOTD);
+			break;
+		}
+	case 0xF659:
+		{
+			//Character Error
+			DWORD dwError	= Msg->ReadDWORD();
+
+			ServerCharacterError(dwError);
+			break;
+		}
+	case 0xF745:
+		{
+			//create object
+			cWObject *tpObj = new cWObject();
+			tpObj->ParseF745(Msg);
+			m_ObjectDB->AddObject(tpObj);
+
+			if (tpObj->GetGUID() == m_dwGUIDLogin)
+			{
+				//cache it!
+				std::vector<stModelSwap> *mod = tpObj->GetModelSwaps();
+				std::vector<stTextureSwap> *tex = tpObj->GetTextureSwaps();
+				std::vector<stPaletteSwap> *pal = tpObj->GetPaletteSwaps();
+
+				char tpfn[80];
+				size_t iCount;
+				sprintf(tpfn, "%08X.charcache", tpObj->GetGUID());
+				FILE *tpo = fopen(tpfn, "wb");
+				
+				iCount = mod->size(); fwrite(&iCount, 4, 1, tpo);
+				for (DWORD i=0;i<iCount;i++)
+					fwrite(&(*mod)[i], sizeof(stModelSwap), 1, tpo);
+				
+				iCount = tex->size(); fwrite(&iCount, 4, 1, tpo);
+				for (DWORD i=0;i<iCount;i++)
+					fwrite(&(*tex)[i], sizeof(stTextureSwap), 1, tpo);
+				
+				iCount = pal->size(); fwrite(&iCount, 4, 1, tpo);
+				for (DWORD i=0;i<iCount;i++)
+					fwrite(&(*pal)[i], sizeof(stPaletteSwap), 1, tpo);
+				fclose(tpo);
+			}
+			break;
+		}
+	case 0xF746:
+		{
+			DWORD object = Msg->ReadDWORD();
+			m_CharInfo->SetGUID(object);
+
+			break;
+		}
+	case 0xF747:
+		{
+			//remove item
+			DWORD object = Msg->ReadDWORD();
+			//hack
+			if (object == m_dwGUIDLogin)
+				return;
+			m_ObjectDB->DeleteObject(object);
+			DWORD unknown = Msg->ReadDWORD();
+			break;
+		}
+	case 0xF748:
+		{
+			//set position/motion
+			DWORD object = Msg->ReadDWORD();
+			cWObject *tpObj = m_ObjectDB->FindObject(object);
+			if (tpObj)
+				tpObj->ParseF748(Msg);
+			break;
+		}
+	case 0xF749:
+		{
+			//wield object... and other stuff
+
+			//figure this out at some point
+			break;
+		}
+	case 0xF74A:
+		{
+			//move object into inventory
+
+			//figure this out at some point
+			break;
+		}
+	case 0xF74B:
+		{
+			//toggle object visibility
+
+			DWORD character = Msg->ReadDWORD();
+			WORD portalType = Msg->ReadWORD();
+			WORD unknown_1 = Msg->ReadWORD();
+			WORD totalLogins = Msg->ReadWORD();
+			WORD loginPortals = Msg->ReadWORD();
+
+			if ((character == m_dwGUIDLogin) && (portalType == 0x4410))
+			{
+				//no portal mode!!  Just materialize!
+				bPortalMode = true;
+
+				m_Interface->OutputConsoleString("I wanna mat!");
+				SendMaterialize();
+			}
+			break;
+		}
+	case 0xF74C:
+		{
+			//animation...
+			DWORD object = Msg->ReadDWORD();
+			cWObject *woThis = m_ObjectDB->FindObject(object);
+			if (!woThis)
+				return;
+			woThis->ParseF74C(Msg);
+
+			break;
+		}
+	case 0xF74E:
+		{
+			//jumping...
+
+			//figure this out at some point
+			break;
+		}
+	case 0xF750:
+		{
+			//sound effect
+
+			//figure this out at some point
+			break;
+		}
+	case 0xF751:
+		{
+			//enter portal mode
+
+			//figure this out at some point
+			break;
+		}
+	case 0xF755:
+		{
+			//visual/sound effect
+
+			//figure this out at some point
+			break;
+		}
+	case 0xF7DE:
+		{
+			//turbine chat
+
+			break;
+		}
+
+	case 0xF7DF:
+		{
+			//Enter 3D Mode
+			m_Interface->OutputConsoleString("Enter 3D Mode.");
+
+			cPacket *LoginPacket = new cPacket();
+			LoginPacket->Add((DWORD) 0xF657);
+			LoginPacket->Add(m_dwGUIDLogin);
+			LoginPacket->Add(std::string(m_zAccountName));
+			LoginPacket->Add((WORD) 0x0000);
+			SendLSMessage(LoginPacket, 6);
+
+			m_Interface->SetInterfaceMode(eGame);
+			break;
+		}
+	case 0xF7E0:
+		{
+			//display message
+			char *text = Msg->ReadString();
+			eColor color = (eColor) Msg->ReadDWORD();
+
+			m_Interface->OutputString(color, "%s", text);
+
+			delete []text;
+			break;
+		}
+	case 0xF7E1:
+		{
+			//Server Name/Players
+			DWORD players = Msg->ReadDWORD();
+			Msg->ReadDWORD(); //unknown - 0xFFFFFFFF
+			char *server = Msg->ReadString();
+			m_Interface->SetWorldPlayers(server, players);
+			delete []server;
+			//unknown WORD - 0x0000
+			break;
+		}
+	case 0xF7E5:
+		{
+			//Incoming message:
+//June 12
+/* e5 f7
+00 00 01 00 00 00 01 00  00 00 05 00 00 00 02 00
+00 00 00 00 00 00 01 00  00 00
+*/
+			//(LoginServer!) first server message, reply with F7E6
+			BYTE REP_F7E6[] =
+			{
+//July 05
+/*				0xe6, 0xf7, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x01, 0x00, 0x00, 0x00, 0x34, 0x00, 0x00, 0x00, 0xcc, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00,
+				0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0xd8, 0xff, 0xff, 0xff,
+				0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x27, 0x00, 0x00, 0x00,
+				0xd9, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00*/
+//Aug 05
+/*				0xe6, 0xf7, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x01, 0x00, 0x00, 0x00, 0x4f, 0x00, 0x00, 0x00, 0xb1, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00,
+				0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x2a, 0x00, 0x00, 0x00, 0xd6, 0xff, 0xff, 0xff,
+				0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00,
+				0xd8, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00*/
+//Oct 06
+/*				0xe6, 0xf7, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00,
+				0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x78, 0x00, 0x00, 0x00, 0x88, 0xff, 0xff, 0xff,
+				0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x73, 0x00, 0x00, 0x00,
+				0x8d, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00*/
+//June 12
+				0xe6, 0xf7, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x01, 0x00, 0x00, 0x00, 0x45, 0x05, 0x00, 0x00, 0xbb, 0xfa, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00,
+				0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xbe, 0x01, 0x00, 0x00, 0x42, 0xfe, 0xff, 0xff,
+				0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0xb3, 0x01, 0x00, 0x00,
+				0x4d, 0xfe, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+
+			};
+
+			cPacket *LoginPacket = new cPacket();
+			LoginPacket->Add(REP_F7E6, sizeof(REP_F7E6));
+			SendLSMessage(LoginPacket, 7);
+
+			break;
+		}
+	case 0xF7EA:
+		{
+			//(LoginServer!) second server message, reply with F7EA
+			cPacket *LoginPacket = new cPacket();
+			LoginPacket->Add((DWORD) 0xF7EA);
+			SendLSMessage(LoginPacket, 7);
+			break;
+		}
+	case 0xF7B0:
+		{
+			DWORD character = Msg->ReadDWORD();
+			DWORD sequence = Msg->ReadDWORD();
+			DWORD event = Msg->ReadDWORD();
+			switch (event)
+			{
+			case 0x0013:
+				{
+					//login character...
+					m_CharInfo->ParseLogin(Msg);
+
+					//send materialize packet.  H@x.
+					SendMaterialize();
+					break;
+				}
+			case 0x0020:
+				{
+					//allegiance info -- response to F7B1/1F query
+
+					m_CharInfo->ParseAllegiance(Msg);
+					break;
+				}
+			case 0x0021:
+				{
+					//Friends list Update
+
+					m_CharInfo->ParseFriendsUpdate(Msg);
+					break;
+				}
+			case 0x0029:
+				{
+					//TitleList
+
+					m_CharInfo->ParseTitleList(Msg);
+					break;
+				}
+			case 0x0196:
+				{
+					m_ObjectDB->ParsePackContents(Msg);
+					break;
+				}
+			case 0x004D:
+				{
+					//remove spell from spellbook
+					m_CharInfo->RemoveSpellFromBook(Msg->ReadDWORD());
+					WORD unknown = Msg->ReadWORD();
+					break;
+				}
+			case 0x01AD:
+				{
+					//kill/death message
+					char *text = Msg->ReadString();
+
+					m_Interface->OutputString(eWhite, "Kill/Death: %s", text);
+
+					delete []text;
+					break;
+				}
+			case 0x01C0:
+				{
+					//update creature health bar
+
+					DWORD object = Msg->ReadDWORD();
+					float health = Msg->ReadFloat();
+
+					//update the interface with this, soon as i make a selected object bar...
+					break;
+				}
+			case 0x01C3:
+				{
+					//age command result
+					char *unknown = Msg->ReadString();
+					char *age = Msg->ReadString();
+
+					m_Interface->OutputString(eYellow, "Your age: %s", age);
+
+					delete []age;
+					delete []unknown;
+					break;
+				}
+			case 0x01C7:
+				{
+					//previous action complete!
+					
+					//uh, do we care...?
+					break;
+				}
+			case 0x01C8:
+				{
+					//Allegiance info 
+
+					DWORD unkzero = Msg->ReadDWORD();	//no idea what this does, but the DWORD always seems to be zero
+					break;
+				}
+			case 0x01F4:
+				{
+					//squelched users list
+
+					m_CharInfo->ParseSquelches(Msg);
+					break;
+				}
+			case 0x0226:
+				{
+					//House info panel for non-owners
+
+					DWORD ownershipStatus = Msg->ReadDWORD();
+					//was "2" on my char.. means you do not own and can buy a new house immediately?
+					break;
+				}
+			case 0x028A:
+				{
+					//Action Failure!
+					DWORD reason = Msg->ReadDWORD();
+
+					switch (reason)
+					{
+						case 0x001D: m_Interface->OutputString(eGreen, "You're too busy!"); break;
+						case 0x001C: m_Interface->OutputString(eGreen, "You've charged too far!"); break;
+						case 0x0039: m_Interface->OutputString(eGreen, "Unable to move object!"); break;
+						case 0x03F7: m_Interface->OutputString(eGreen, "You're too fatigued to attack!"); break;
+						case 0x03F8: m_Interface->OutputString(eGreen, "You are out of ammunition!"); break;
+						case 0x03F9: m_Interface->OutputString(eGreen, "Your missile attack misfired!"); break;
+						case 0x03FA: m_Interface->OutputString(eGreen, "You've attempted an impossible spell path!"); break;
+						case 0x03FE: m_Interface->OutputString(eGreen, "You don't know that spell!"); break;
+						case 0x03FF: m_Interface->OutputString(eGreen, "Incorrect target type!"); break;
+						case 0x0400: m_Interface->OutputString(eGreen, "You don't have all the components for this spell."); break;
+						case 0x0401: m_Interface->OutputString(eGreen, "You don't have enough Mana to cast this spell."); break;
+						case 0x0402: m_Interface->OutputString(eGreen, "Your spell fizzled."); break;
+						case 0x0403: m_Interface->OutputString(eGreen, "Your spell's target is missing!"); break;
+						case 0x0404: m_Interface->OutputString(eGreen, "Your projectile spell mislaunched!"); break;
+						case 0x040A: m_Interface->OutputString(eGreen, "(You're not in combat mode!)?"); break;
+						case 0x043E: m_Interface->OutputString(eGreen, "You have solved this quest too recently!"); break;
+						case 0x043F: m_Interface->OutputString(eGreen, "You have solved this quest too many times!"); break;
+						case 0x051B: m_Interface->OutputString(eGreen, "You have entered your allegiance chat room."); break;
+						case 0x051C: m_Interface->OutputString(eGreen, "You have left an allegiance chat room."); break;
+						case 0x051D: m_Interface->OutputString(eGreen, "Turbine Chat is enabled."); break;
+						default: m_Interface->OutputString(eGreen, "28A - Error: %08X", reason); break;
+					};
+					break;
+				}
+			case 0x028B:
+				{
+					//Action Failure with Text!
+					DWORD reason = Msg->ReadDWORD();
+					char *text = Msg->ReadString();
+
+					switch (reason)
+					{
+						case 0x001E: m_Interface->OutputString(eLightBlue, "%s is too busy to accept gifts right now.", text); break;
+						case 0x002B: m_Interface->OutputString(eLightBlue, "%s cannot carry anymore.", text); break;
+						case 0x0051: m_Interface->OutputString(eLightBlue, "You fail to affect %s because you are not a player killer!", text); break;
+						case 0x03EF: m_Interface->OutputString(eLightBlue, "%s is not accepting gifts right now.", text); break;
+						case 0x046A: m_Interface->OutputString(eLightBlue, "%s doesn't know what to do with that.", text); break;
+						case 0x04D6: m_Interface->OutputString(eLightBlue, "You have succeeded in specializing your %s skill!", text); break;
+						case 0x04D7: m_Interface->OutputString(eLightBlue, "You have succeeded in lowering your %s skill from specialized to trained!", text); break;
+						case 0x04D8: m_Interface->OutputString(eLightBlue, "You have succeeded in untraining your %s skill!", text); break;
+						case 0x04D9: m_Interface->OutputString(eLightBlue, "Although you cannot untrain your %s skill, you have succeeded in recovering all the experience you had invested in it.", text); break;
+						case 0x04F6: m_Interface->OutputString(eLightBlue, "%s fails to affect you because %s is not a player killer!", text, text); break;
+						case 0x051B: m_Interface->OutputString(eGreen4, "You have entered the %s channel.", text); break;
+						default: m_Interface->OutputString(eLightBlue, "28B - Error: %08X, Text: %s", reason, text); break;
+					};
+
+					delete []text;
+					break;
+				}
+			case 0x0295:
+				{
+					//set (turbine? allegiance?) chat channel
+					
+					DWORD channel = Msg->ReadDWORD();
+
+					break;
+				}
+			case 0x02BD:
+				{
+					//@tell to me
+					char *text = Msg->ReadString();
+					char *sourceName = Msg->ReadString();
+					DWORD source = Msg->ReadDWORD();
+					DWORD destination = Msg->ReadDWORD();
+					eColor color = (eColor) Msg->ReadDWORD();
+
+					// store the name
+					m_treeNameIDCache[ sourceName ] = source;
+
+					m_Interface->OutputString(color, "%s tells you, \"%s\"", sourceName, text);
+
+					delete []text;
+					delete []sourceName;
+					break;
+				}
+			case 0x02C1:
+				{
+					//add spell to spellbook
+					m_CharInfo->AddSpellToBook(Msg->ReadDWORD());
+					WORD unknown = Msg->ReadWORD();
+					break;
+				}
+			case 0x02C2:
+				{
+					//add enchantment
+					cEnchantment *tpench = new cEnchantment();
+					tpench->Unpack(Msg);
+					m_CharInfo->AddEnchantment(tpench);
+					break;
+				}
+			case 0x02C3:
+				{
+					//remove enchantment
+					WORD spell = Msg->ReadWORD();
+					WORD layer = Msg->ReadWORD();
+					m_CharInfo->RemoveEnchantment(spell, layer);
+					break;
+				}
+			case 0x02C6:
+				{
+					//remove ALL enchantments...
+
+					m_CharInfo->RemoveAllEnchantments();
+					break;
+				}
+			case 0x02C5: case 0x02C8:
+				{
+					//remove multiple enchantment, 2C8 is silently but whatever
+					DWORD count = Msg->ReadDWORD();
+					for (int i=0;i<(int)count;i++)
+					{
+						WORD spell = Msg->ReadWORD();
+						WORD layer = Msg->ReadWORD();
+						m_CharInfo->RemoveEnchantment(spell, layer);
+					}
+					break;
+				}
+			default:
+				{
+					{
+						WORD dataSize = Msg->GetLength() - 4 - 12;
+						BYTE *data = Msg->ReadGroup(dataSize);
+						m_Interface->OutputConsoleString("Unhandled Packet: F7B0/%04X Contents:", event);
+						for (int i = 0; i <= ((dataSize - (dataSize % 16)) / 16); i++)
+						{
+							char valbuff[128]; memset(valbuff, 0, 128);
+							char linebuff[128]; memset(linebuff, 0, 128);
+							char strbuff[128]; memset(strbuff, 0, 128);
+
+							strcat(strbuff, "; ");
+							for (int j = i * 16; (j < ((i+1)*16)) && (j < dataSize); j++)
+							{
+								sprintf(valbuff, "%.1s", &data[j]);
+								strcat(strbuff, valbuff);
+								sprintf(valbuff, "%02X ", data[j]);
+								strcat(linebuff, valbuff);
+							}
+							strcat(linebuff, strbuff);
+							m_Interface->OutputConsoleString("%s", linebuff);
+						}
+						break;
+					}
+					break;
+				}
+			};
+			break;
+		}
+
+///---- Stuff below here hasn't been updated post-TOD!!! ----
+/*	case 0xF7B7://.DAT patch file
+		{
+			break;
+		}
+	case 0xF7B8://.DAT patching status
+		{
+			break;
+		}
+	case 0x0229:
+		{
+			//set coverage (misnamed)
+			BYTE sequence = Msg->ReadByte();
+			DWORD object = Msg->ReadDWORD();
+			DWORD unknown = Msg->ReadDWORD();
+			DWORD coverage = Msg->ReadDWORD();
+			
+			cWObject *tpObj = m_ObjectDB->FindObject(object);
+			m_ObjectDB->Lock();
+			tpObj->Set229(unknown, coverage);
+			m_ObjectDB->Unlock();
+			break;
+		}
+	case 0x022D:
+		{
+			//set wielder/container
+			BYTE sequence = Msg->ReadByte();
+			DWORD object = Msg->ReadDWORD();
+			DWORD equipType = Msg->ReadDWORD();
+			DWORD container = Msg->ReadDWORD();
+			DWORD sequence2 = Msg->ReadDWORD();
+
+			cWObject *tpObj = m_ObjectDB->FindObject(object);
+			m_ObjectDB->Lock();
+			tpObj->Set22D(equipType, container);
+			m_ObjectDB->Unlock();
+			break;
+		}
+	case 0xF7AB:
+		{
+			//landblock+objects download
+			for (int i=0;i<2;i++)
+			{
+				DWORD landcell = Msg->ReadDWORD();
+				if (landcell)
+				{
+					DWORD bytesCompressed = Msg->ReadDWORD();
+					DWORD bytesUncompressed = Msg->ReadDWORD();
+
+					cPortalFile * pfTemp = new cPortalFile();
+					pfTemp->data = new BYTE[bytesUncompressed];
+					pfTemp->length = bytesUncompressed;
+					pfTemp->pos = 0;
+					pfTemp->id = landcell;
+
+					BYTE *tpCompLB = Msg->ReadGroup(bytesCompressed);
+					uncompress(pfTemp->data, (uLongf *) &bytesUncompressed, tpCompLB, bytesCompressed);
+					m_Interface->AddLandblock(pfTemp);
+				}
+				m_Interface->OutputString(eRed, "F7AB Downloaded Landblock: %08X", landcell);
+			}
+			break;
+		}
+	case 0xF7AC:
+		{
+			//is this ever used anymore?
+
+			//landblock download
+			DWORD landcell = Msg->ReadDWORD();
+			DWORD bytesCompressed = Msg->ReadDWORD();
+			DWORD bytesUncompressed = Msg->ReadDWORD();
+//			BYTE *tpCompLB = Msg->ReadGroup(bytesCompressed);
+//			cInterface::stLandblock tpLB;
+//			uncompress((BYTE *) &tpLB, (uLongf *) &bytesUncompressed, tpCompLB, bytesCompressed);
+//			m_Interface->AddLandblock(tpLB);
+
+			m_Interface->OutputString(eRed, "F7AC Downloaded Landblock: %08X", landcell);
+			break;
+		}*/
+	default:
+		{
+			WORD dataSize = Msg->GetLength() - 4;
+			BYTE *data = Msg->ReadGroup(dataSize);
+			m_Interface->OutputConsoleString("Unhandled Packet: %04X Contents:", dwType);
+			for (int i = 0; i <= ((dataSize - (dataSize % 16)) / 16); i++)
+			{
+				char valbuff[128]; memset(valbuff, 0, 128);
+				char linebuff[128]; memset(linebuff, 0, 128);
+				char strbuff[128]; memset(strbuff, 0, 128);
+
+				strcat(strbuff, "; ");
+				for (int j = i * 16; (j < ((i+1)*16)) && (j < dataSize); j++)
+				{
+					sprintf(valbuff, "%.1s", &data[j]);
+					strcat(strbuff, valbuff);
+					sprintf(valbuff, "%02X ", data[j]);
+					strcat(linebuff, valbuff);
+				}
+				strcat(linebuff, strbuff);
+				m_Interface->OutputConsoleString("%s", linebuff);
+			}
+			break;
+		}
+	}
+
+	delete Msg;
+}
+
+void cNetwork::SendLSMessage(cPacket *Packet, WORD wGroup)
+{
+	cPacket *Msg = new cPacket();
+	stTransitHeader TransHead;
+	stFragmentHeader FragHead;
+
+	TransHead.m_dwFlags = 0x200;
+	TransHead.m_wSize = (WORD)sizeof(stFragmentHeader) + Packet->GetLength();
+	Lock();
+	FragHead.m_dwSequence = ++m_dwFragmentSequenceOut;
+	Unlock();
+	FragHead.m_dwID = 0x80000000;
+	FragHead.m_wIndex = 0;
+	FragHead.m_wCount = 1;
+	FragHead.m_wSize = (WORD)sizeof(stFragmentHeader) + Packet->GetLength();
+	FragHead.m_wGroup = wGroup;
+
+	Msg->Add(&TransHead);
+	Msg->Add(&FragHead);
+    
+	Msg->Add(Packet->GetData(), Packet->GetLength());
+	SendLSPacket(Msg, true, true);
+	delete Packet;
+}
+
+void cNetwork::SendWSMessage(cPacket *Packet, WORD wGroup)
+{
+	cPacket *Msg = new cPacket();
+	stTransitHeader TransHead;
+	stFragmentHeader FragHead;
+
+	TransHead.m_dwFlags = 0x200;
+	TransHead.m_wSize = (WORD)sizeof(stFragmentHeader) + Packet->GetLength();
+	FragHead.m_dwSequence = ++m_dwFragmentSequenceOut;
+	FragHead.m_dwID = 0x80000000;
+	FragHead.m_wIndex = 0;
+	FragHead.m_wCount = 1;
+	FragHead.m_wSize = (WORD)sizeof(stFragmentHeader) + Packet->GetLength();
+	FragHead.m_wGroup = wGroup;
+
+	Msg->Add(&TransHead);
+	Msg->Add(&FragHead);
+    
+	Msg->Add(Packet->GetData(), Packet->GetLength());
+	SendWSPacket(Msg, m_pActiveWorld, true, true);
+	delete Packet;
+}
+
+void cNetwork::SendLSGameEvent(cPacket *Packet, WORD wGroup)
+{
+	cPacket *Event = new cPacket();
+	Event->Add(0xF7B1UL);
+	Event->Add(++m_dwGameEventOut);
+	Event->Add(Packet->GetData(), Packet->GetLength());
+	delete Packet;
+	SendLSMessage(Event, wGroup);
+}
+
+void cNetwork::SendWSGameEvent(cPacket *Packet, WORD wGroup)
+{
+	cPacket *Event = new cPacket();
+	Event->Add(0xF7B1UL);
+	Event->Add(++m_dwGameEventOut);
+	Event->Add(Packet->GetData(), Packet->GetLength());
+	delete Packet;
+	SendWSMessage(Event, wGroup);
+}
+
+void cNetwork::DownloadLandblock(DWORD Landblock)
+{
+	cPacket *LBReq = new cPacket();
+	LBReq->Add((DWORD) 0xF7E3);
+	LBReq->Add((DWORD) 0);
+	LBReq->Add(Landblock);
+	SendWSMessage(LBReq, 7);
+}
+
+void cNetwork::EnterGame(DWORD GUID)
+{
+	bPortalMode = true;
+
+	m_dwGUIDLogin = GUID;
+
+	//send enter game packet
+	cPacket *LoginPacket = new cPacket();
+	LoginPacket->Add((DWORD) 0xF7C8);
+	SendLSMessage(LoginPacket, 6);
+}
+
+void cNetwork::SendPositionUpdate(stLocation *Location, stMoveInfo *MoveInfo)
+{
+	cPacket *PosUpdate = new cPacket();
+	PosUpdate->Add((DWORD) 0xF753);
+	PosUpdate->Add(Location, sizeof(stLocation));
+	PosUpdate->Add(MoveInfo, sizeof(stMoveInfo));
+	PosUpdate->Add((DWORD) 0x00000001);
+	SendWSGameEvent(PosUpdate, 5);
+}
+
+void cNetwork::SendAnimUpdate(int iFB, int iStrafe, int iTurn, bool bRunning)
+{
+	cWObject *woMyself = m_ObjectDB->FindObject(m_dwGUIDLogin);
+	if (!woMyself)
+		return;
+
+	stLocation *lTemp = woMyself->GetLocation();
+	stMoveInfo mTemp = woMyself->GetMoveInfo();
+	WORD wMyStance = woMyself->GetStance();
+
+	cPacket *CS = new cPacket();
+	CS->Add((DWORD) 0xF61C);
+	
+	DWORD dwFlags = 0;
+	if (wMyStance == 0x49)
+	{
+		dwFlags |= 2;
+	}
+	if (iFB != 0)
+	{
+		dwFlags |= 4;
+		if (bRunning) dwFlags |= 1;
+	}
+	if (iTurn != 0)
+	{
+		dwFlags |= 0x102;
+	}
+	if (iStrafe != 0)
+	{
+		dwFlags |= 0x22;
+	}
+
+	CS->Add((DWORD) dwFlags);
+
+	if (dwFlags & 1)
+		CS->Add((DWORD) 2);				//flag 1 - running
+
+	if (dwFlags & 2)
+	{
+		CS->Add((WORD) wMyStance);
+		CS->Add((WORD) 0x8000);
+	}
+
+	if (dwFlags & 4)
+	{
+		if (iFB > 0)
+			CS->Add((DWORD) 0x45000005);	//flag 4 - forwards
+		else
+			CS->Add((DWORD) 0x45000006);	//flag 4 - backwards
+	}
+
+	if (dwFlags & 0x20)
+	{
+		if (iStrafe > 0)
+			CS->Add((DWORD) 0x6500000F);	//flag 20 - right
+		else
+			CS->Add((DWORD) 0x65000010);	//flag 20 - left
+	}
+
+	if (dwFlags & 0x100)
+	{
+		if (iTurn > 0)
+			CS->Add((DWORD) 0x6500000D);	//flag 100 - right
+		else
+			CS->Add((DWORD) 0x6500000E);	//flag 100 - left
+	}
+
+	CS->Add(lTemp, sizeof(stLocation));	//full location
+	mTemp.moveCount = woMyself->GetAnimCount();	//f74ccount;
+	CS->Add(&mTemp, sizeof(stMoveInfo));	//movement info
+	CS->Add((DWORD) 1);				//?	also seen as 0 for just position updates...
+	SendWSGameEvent(CS, 5);	//definitely group 5
+}
+
+void cNetwork::SetCombatMode(bool CombatMode)
+{
+	cPacket *PosUpdate = new cPacket();
+	PosUpdate->Add((DWORD) 0x0053);
+	PosUpdate->Add((DWORD) (CombatMode ? 2 : 1));
+	SendWSGameEvent(PosUpdate, 5);
+}
+
+void cNetwork::CastSpell(DWORD Target, DWORD Spell)
+{
+	cPacket *CS = new cPacket();
+	CS->Add((DWORD) 0x004A);
+	CS->Add(Target);
+	CS->Add(Spell);
+	SendWSGameEvent(CS, 5);
+}
+
+void cNetwork::UseItem(DWORD Item, DWORD Target)
+{
+	//......
+	cPacket *UI = new cPacket();
+	UI->Add((DWORD) 0x0036);
+	UI->Add(Item);
+	SendWSGameEvent(UI, 5);
+}
+
+void cNetwork::SendAllegianceRecall()
+{
+	cPacket *SPM = new cPacket();
+	SPM->Add( (DWORD) 0x0278 );
+	SendWSGameEvent( SPM, 5 );
+}
+
+void cNetwork::SendHouseRecall()
+{
+	cPacket *SPM = new cPacket();
+	SPM->Add( (DWORD) 0x0262 );
+	SendWSGameEvent( SPM, 5 );
+}
+
+void cNetwork::SendLifestoneRecall()
+{
+	cPacket *SPM = new cPacket();
+	SPM->Add( (DWORD) 0x0063 );
+	SendWSGameEvent( SPM, 5 );
+}
+
+void cNetwork::SendMarketplaceRecall()
+{
+	cPacket *SPM = new cPacket();
+	SPM->Add( (DWORD) 0x28D );
+	SendWSGameEvent( SPM, 5 );
+}
+
+void cNetwork::SendPublicMessage(std::string & Message)
+{
+	cPacket *SPM = new cPacket();
+	SPM->Add( (DWORD) 0x0015 );
+	SPM->Add( Message );
+	SendWSGameEvent( SPM, 5 );
+}
+
+void cNetwork::SendTell(std::string & Name, std::string & Message)
+{
+	std::map< std::string, DWORD >::iterator i = m_treeNameIDCache.find( Name );
+	if( i != m_treeNameIDCache.end() )
+		SendTell( i->second, Message );
+
+	cPacket *SPM = new cPacket();
+	SPM->Add( (DWORD) 0x005D );
+	SPM->Add( Message );
+	SPM->Add( Name );
+	SendWSGameEvent( SPM, 5 );
+}
+
+void cNetwork::SendTell(DWORD dwGUID, std::string & Message)
+{
+	cPacket *SPM = new cPacket();
+	SPM->Add( (DWORD) 0x0032 );
+	SPM->Add( Message );
+	SPM->Add( dwGUID );
+	SendWSGameEvent( SPM, 5 );
+}
+
+stServerInfo * cNetwork::AddWorldServer(SOCKADDR_IN NewServer)
+{
+	Lock();
+	bool bFound = false;
+	stServerInfo *ToRet = NULL;
+	for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
+	{
+		if (SockCompare(&NewServer, &(*i).m_saServer))
+		{
+			ToRet = &*i;
+			bFound = true;
+			break;
+		}
+	}
+
+	if (bFound) {
+		//don't duplicate or we'll end up resetting an existing server.
+		Unlock();
+		return ToRet;
+	}
+	stServerInfo tpNewServer;
+
+	m_Interface->OutputConsoleString("New Worldserver!  Creating!");
+
+	//fill in tpNewServer struct...
+	memcpy(&tpNewServer.m_saServer, &NewServer, sizeof(SOCKADDR_IN));
+	tpNewServer.m_lSentPackets.clear();
+	tpNewServer.m_iSendSequence = 1;
+	tpNewServer.m_wLogicalID = 0;
+	tpNewServer.m_wTable = 0;
+	tpNewServer.m_dwFlags = 0;
+	tpNewServer.m_dwLastPing = GetTickCount();
+	tpNewServer.m_dwLastSyncSent = 0;
+	tpNewServer.m_dwRecvSequence = 0;
+	tpNewServer.m_dwLastPacketSent = GetTickCount();
+	tpNewServer.m_dwLastConnectAttempt = GetTickCount();
+
+	m_siWorldServers.push_back(tpNewServer);
+	Unlock();
+	return &m_siWorldServers.back();
+}
+
+void cNetwork::SetActiveWorldServer(SOCKADDR_IN NewServer)
+{
+	Lock();
+	for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
+	{
+		if (SockCompare(&NewServer, &(*i).m_saServer))
+		{
+			m_pActiveWorld = &(*i);
+			break;
+		}
+	}
+	Unlock();
+}
+
+void cNetwork::SendMaterialize()
+{
+	m_Interface->OutputConsoleString("Materialize!");
+
+	bPortalMode = false;
+
+	cPacket *Mat = new cPacket();
+	Mat->Add((DWORD) 0x00A1);
+	SendWSGameEvent(Mat, 5);
+}
+
+void cNetwork::SendHouseInfoQuery()
+{
+	//Asks for housing info -- server responds with house info packet
+
+	cPacket *TestOut = new cPacket();
+	TestOut->Add((DWORD) 0x021E);
+	SendWSGameEvent(TestOut, 5);
+}
+
+void cNetwork::RequestAllegianceUpdate()
+{
+	cPacket *AllegUpdate = new cPacket();
+	AllegUpdate->Add((DWORD) 0x1F);
+	AllegUpdate->Add((DWORD) 0x01);	//seems to be ignored..?
+	SendLSGameEvent(AllegUpdate, 5);
+}

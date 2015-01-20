@@ -1,0 +1,286 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hpp;hxx;hm;inl;inc;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx</Extensions>
+    </Filter>
+    <Filter Include="WindowLib">
+      <UniqueIdentifier>{ec755a8c-9624-4368-aa85-987bf0e812e1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Window Controls">
+      <UniqueIdentifier>{2368aa91-23fb-4be2-9565-77a7c37b28f7}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="AC2DTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="BSPTypes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cByteStream.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cCellManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cCharInfo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cClient.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cGraphics.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cInterface.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cMessage.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cModel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cModelGroup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cNetwork.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cObjectDB.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cPacket.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cPortal.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="crc.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cThread.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cTurbineFile.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cWObject.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Landblocks.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="stdafx.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="WindowLib\CButton.cpp">
+      <Filter>WindowLib</Filter>
+    </ClCompile>
+    <ClCompile Include="WindowLib\CClipboard.cpp">
+      <Filter>WindowLib</Filter>
+    </ClCompile>
+    <ClCompile Include="WindowLib\CMessageBox.cpp">
+      <Filter>WindowLib</Filter>
+    </ClCompile>
+    <ClCompile Include="WindowLib\CRootWindow.cpp">
+      <Filter>WindowLib</Filter>
+    </ClCompile>
+    <ClCompile Include="WindowLib\CWindow.cpp">
+      <Filter>WindowLib</Filter>
+    </ClCompile>
+    <ClCompile Include="WindowLib\CWindowManager.cpp">
+      <Filter>WindowLib</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="AC2DTest.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="BSPTypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cByteStream.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cCellManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cCharInfo.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cClient.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cGraphics.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cInterface.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cMessage.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cModel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cModelGroup.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cNetwork.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cObjectDB.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cPacket.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cPoint3D.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cPortal.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="crc.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cThread.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cTurbineFile.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cWObject.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Landblocks.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="stdafx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\CButton.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\CClipboard.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\EventAbstractors\ClipboardEventsAbstractor.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\CMessageBox.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\CRootWindow.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\CWindow.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\CWindowManager.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\EventAbstractors\FocusEventsAbstractor.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\Interfaces\IClipboard.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\Interfaces\IClipboardEvents.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\Interfaces\IFocusEvents.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\Interfaces\IKeyboardEvents.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\Interfaces\IMouseEvents.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\Interfaces\IMoveEvent.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\Interfaces\IRenderEvent.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\Interfaces\IResizeEvent.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\Interfaces\IWindow.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\Interfaces\IWindowManager.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\EventAbstractors\KeyboardEventsAbstractor.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\EventAbstractors\MouseEventsAbstractor.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\EventAbstractors\MoveEventAbstractor.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\EventAbstractors\RenderEventAbstractor.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\EventAbstractors\ResizeEventAbstractor.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowLib\Resource.h">
+      <Filter>WindowLib</Filter>
+    </ClInclude>
+    <ClInclude Include="cCustomWindows.h">
+      <Filter>Window Controls</Filter>
+    </ClInclude>
+    <ClInclude Include="cEditBox.h">
+      <Filter>Window Controls</Filter>
+    </ClInclude>
+    <ClInclude Include="cMovableWindow.h">
+      <Filter>Window Controls</Filter>
+    </ClInclude>
+    <ClInclude Include="cPictureBox.h">
+      <Filter>Window Controls</Filter>
+    </ClInclude>
+    <ClInclude Include="cProgressBar.h">
+      <Filter>Window Controls</Filter>
+    </ClInclude>
+    <ClInclude Include="cScrollBar.h">
+      <Filter>Window Controls</Filter>
+    </ClInclude>
+    <ClInclude Include="cStaticText.h">
+      <Filter>Window Controls</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="AC2DTest.ico">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="client.ico">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="small.ico">
+      <Filter>Resource Files</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="AC2DTest.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+</Project>
