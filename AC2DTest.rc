@@ -80,14 +80,10 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,0,11,4104
- PRODUCTVERSION 0,0,11,4104
- FILEFLAGSMASK 0x17L
-#ifdef _DEBUG
- FILEFLAGS 0x1L
-#else
- FILEFLAGS 0x0L
-#endif
+ FILEVERSION 0,0,11,5694
+ PRODUCTVERSION 0,0,0,0
+ FILEFLAGSMASK 0x3FL
+ FILEFLAGS 0x2L
  FILEOS 0x4L
  FILETYPE 0x1L
  FILESUBTYPE 0x0L
@@ -96,18 +92,18 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "Comments", "compiled Thu Aug 11 03:14:56 2005 : RETAIL"
             VALUE "CompanyName", "Turbine, Inc."
             VALUE "FileDescription", "acclient"
-            VALUE "FileVersion", "0.0.11.4104"
+            VALUE "FileVersion", "00.00.11.5694"
             VALUE "InternalName", "acclient"
             VALUE "LegalCopyright", "Copyright © Turbine, Inc."
-            VALUE "NetVersion", "2005"
             VALUE "OriginalFilename", "acclient.exe"
             VALUE "ProductName", "acclient"
-            VALUE "ProductVersion", "0.0.11.4104"
-            VALUE "TurbineBuildVersion", "00.00.11.4104.r"
+            VALUE "ProductVersion", "00.00.11.5694"
+            VALUE "Comments", "compiled Wed May  7 04:17:41 2014 : RETAIL"
+            VALUE "TurbineBuildVersion", "00.00.11.5694.r"
             VALUE "TurbineType", "Player External"
+            VALUE "NetVersion", "1802"
         END
     END
     BLOCK "VarFileInfo"

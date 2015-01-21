@@ -9,3 +9,5 @@ Thumbs.db
 
 # Precached DAT files by AC2D
 *.pre
+*.aps
+*.opensdf

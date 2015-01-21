@@ -1,13 +1,10 @@
 #include "stdafx.h"
 #include "crc.h"
 
-DWORD GetMagicNumber( BYTE *pbBuf, WORD wSize, BOOL fIncludeSize )
+DWORD GetMagicNumber( BYTE *pbBuf, WORD wSize )
 {
-	DWORD dwCS = 0;
+    DWORD dwCS = ((DWORD)wSize) << 16;
 	int i;
-
-	if ( fIncludeSize )
-		dwCS += wSize << 16;
 		
 	// sum up the DWORDs:
 	for ( i = 0; i < (wSize >> 2); ++i )
@@ -30,8 +27,8 @@ DWORD CalcCRC( BYTE *pbSendBuffer, int iSize )
 
 	pdwCrc	= (DWORD *)&pbSendBuffer[8];
 	*pdwCrc = 0xBADD70DD;
-	dwCrc1	= GetMagicNumber( &pbSendBuffer[0x00], 0x14, TRUE );
-	dwCrc2	= GetMagicNumber( &pbSendBuffer[0x14], iSize-0x14, FALSE );
+	dwCrc1	= GetMagicNumber( &pbSendBuffer[0x00], 0x14 );
+	dwCrc2	= GetMagicNumber( &pbSendBuffer[0x14], iSize-0x14 );
 	*pdwCrc = dwCrc1 + dwCrc2;
 
 	return (dwCrc1 + dwCrc2);
@@ -46,7 +43,7 @@ DWORD Calc200_CRC( BYTE *pbPacket )
 	{
 		WORD wLength = reinterpret_cast< stFragmentHeader * > ( pbFragment )->m_wSize;
 
-		dwCrc += GetMagicNumber ( pbFragment, sizeof ( stFragmentHeader ), 1 ) + GetMagicNumber ( pbFragment + sizeof ( stFragmentHeader ), wLength - sizeof ( stFragmentHeader ), TRUE );
+		dwCrc += GetMagicNumber ( pbFragment, sizeof ( stFragmentHeader ) ) + GetMagicNumber ( pbFragment + sizeof ( stFragmentHeader ), wLength - sizeof ( stFragmentHeader ) );
 		pbFragment += wLength;
 	}
 
@@ -59,7 +56,7 @@ DWORD CalcTransportCRC( DWORD *pdwWoot )
 	DWORD dwCrc	= 0;
 
 	pdwWoot[2]	= 0xBADD70DD;
-	dwCrc		+= GetMagicNumber( (BYTE *)pdwWoot, 20, TRUE );
+	dwCrc		+= GetMagicNumber( (BYTE *)pdwWoot, 20 );
 	pdwWoot[2]	= dwOrg;
 
 	return dwCrc;
