@@ -50,14 +50,24 @@ void cPacket::AlignDWORD()
 	m_iLength += dwDWORDAlign;
 }
 
+void cPacket::Add(QWORD qwInput)
+{
+    if (m_iLength + (int) sizeof(qwInput) > m_iMaxLength)
+        MessageBox(NULL, "Fix this", "Now", MB_ICONERROR);
+
+    *((QWORD *)m_pbDataPtr) = qwInput;
+    m_pbDataPtr += sizeof(qwInput);
+    m_iLength += sizeof(qwInput);
+}
+
 void cPacket::Add(DWORD dwInput)
 {
-	if (m_iLength + (int) sizeof(dwInput) > m_iMaxLength)
-		MessageBox(NULL, "Fix this", "Now", MB_ICONERROR);
+    if (m_iLength + (int) sizeof(dwInput) > m_iMaxLength)
+        MessageBox(NULL, "Fix this", "Now", MB_ICONERROR);
 
-	*((DWORD *) m_pbDataPtr) = dwInput;
-	m_pbDataPtr += sizeof(dwInput);
-	m_iLength += sizeof(dwInput);
+    *((DWORD *)m_pbDataPtr) = dwInput;
+    m_pbDataPtr += sizeof(dwInput);
+    m_iLength += sizeof(dwInput);
 }
 
 void cPacket::Add(WORD dwInput)
@@ -137,5 +147,7 @@ stTransitHeader * cPacket::GetTransit()
 	return (stTransitHeader *)GetData();
 }
 
-
-
+BYTE * cPacket::GetPayload()
+{
+    return m_pbData + sizeof(stTransitHeader);
+}

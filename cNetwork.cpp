@@ -1,6 +1,5 @@
 #include "stdafx.h"
 #include "cNetwork.h"
-#include "crc.h"
 
 //-a teqilla -h 74.201.102.233:9000
 
@@ -96,7 +95,7 @@ cNetwork::cNetwork()
 
 	m_siLoginServer.m_saServer.sin_family = AF_INET;
 	m_siLoginServer.m_saServer.sin_addr.s_addr = inet_addr(acServerIP);
-	m_siLoginServer.m_saServer.sin_port = htons( acServerPort );
+    m_siLoginServer.m_wBasePort = acServerPort;
 
 	m_treeNameIDCache.clear();
 
@@ -121,7 +120,7 @@ void cNetwork::Reset()
 		delete (*it);
 	}
 	m_siLoginServer.m_lSentPackets.clear();
-	m_siLoginServer.m_iSendSequence = 0;
+    m_siLoginServer.m_dwSendSequence = 0;
 	m_siLoginServer.m_wLogicalID = 0;
 	m_siLoginServer.m_wTable = 0;
 	m_siLoginServer.m_dwFlags = 0;
@@ -157,11 +156,11 @@ void cNetwork::SendWSPacket(cPacket *Packet, stServerInfo *Target, bool IncludeS
 
 	if (IncrementSeq)
 	{
-		Target->m_iSendSequence++;
+        Target->m_dwSendSequence++;
 	}
 
 	if (IncludeSeq) {
-		Head->m_dwSequence = Target->m_iSendSequence;
+        Head->m_dwSequence = Target->m_dwSendSequence;
 		Head->m_wTime = GetTime();
 	}
 	else {
@@ -169,7 +168,7 @@ void cNetwork::SendWSPacket(cPacket *Packet, stServerInfo *Target, bool IncludeS
 		Head->m_wTime = 0;
 	}
 
-	if (Target->m_dwFlags & SF_SHOOK) {
+	if (Target->m_dwFlags & SF_CONNECTED) {
 		Head->m_wID = Target->m_wLogicalID;
 		Head->m_wTable = Target->m_wTable;
 	}
@@ -182,42 +181,153 @@ void cNetwork::SendWSPacket(cPacket *Packet, stServerInfo *Target, bool IncludeS
 	{
 		if (Target->m_dwFlags & SF_CRCSEEDS)
 		{
-			DWORD dwNewCRC, dwXorVal;
-			dwNewCRC = Calc200_CRC( Packet->GetData() );
-			dwXorVal = GetSendXORVal( Target->m_pdwSendCRC );
-			dwNewCRC ^= dwXorVal;
-			dwNewCRC += CalcTransportCRC( (DWORD *)Packet->GetData() );
-			Packet->GetTransit()->m_dwCRC = dwNewCRC;
-			Packet->m_dwSeed = dwXorVal; //Save XOR value - lost packets need this
+			//DWORD dwNewCRC, dwXorVal;
+			//dwNewCRC = Calc200_CRC( Packet->GetData() );
+			//dwXorVal = GetSendXORVal( Target->m_pdwSendCRC );
+			//dwNewCRC ^= dwXorVal;
+			//dwNewCRC += CalcTransportCRC( (DWORD *)Packet->GetData() );
+			//Packet->GetTransit()->m_dwCRC = dwNewCRC;
+			//Packet->m_dwSeed = dwXorVal; //Save XOR value - lost packets need this
 		}
 		else
 		{
 			m_Interface->OutputConsoleString("WS - trying to send 0x200 with no seeds, 'tard!");
 			if (IncludeSeq)
-				Target->m_iSendSequence--;
+                Target->m_dwSendSequence--;
 			delete Packet;
 			return;
 		}
 	}
-	else
-		CalcCRC(Packet->GetData(), Packet->GetLength());//non-0x200 generic CRC
+	//else
+	//	CalcCRC(Packet->GetData(), Packet->GetLength());//non-0x200 generic CRC
 
 	SendPacket(Packet, Target);
 #endif
 }
 
+static DWORD checksum(const void* data, size_t size)
+{
+    DWORD result = static_cast<DWORD>(size) << 16;
+
+    for (size_t i = 0; i < size / 4; i++)
+    {
+        result += static_cast<const DWORD*>(data)[i];
+    }
+
+    int shift = 24;
+
+    for (size_t i = (size / 4) * 4; i < size; i++)
+    {
+        result += static_cast<const BYTE*>(data)[i] << shift;
+        shift -= 8;
+    }
+
+    return result;
+}
+
+static DWORD checksumHeader(stTransitHeader& header)
+{
+    DWORD origChecksum = header.m_dwCRC;
+    header.m_dwCRC = 0xBADD70DD;
+
+    DWORD result = checksum(&header, sizeof(stTransitHeader));
+
+    header.m_dwCRC = origChecksum;
+
+    return result;
+}
+
+static DWORD checksumContent(stTransitHeader& header, const void* data)
+{
+    if (header.m_dwFlags & kBlobFragments)
+    {
+        cByteStream reader((BYTE *) data, header.m_wSize);
+
+        if (header.m_dwFlags & kServerSwitch)
+        {
+            reader.ReadGroup(8);
+        }
+
+        if (header.m_dwFlags & kRequestRetransmit)
+        {
+            DWORD nseq = reader.ReadDWORD();
+            reader.ReadGroup(nseq * sizeof(DWORD));
+        }
+
+        if (header.m_dwFlags & kRejectRetransmit)
+        {
+            DWORD nseq = reader.ReadDWORD();
+            reader.ReadGroup(nseq * sizeof(DWORD));
+        }
+
+        if (header.m_dwFlags & kAckSequence)
+        {
+            reader.ReadGroup(4);
+        }
+
+        if (header.m_dwFlags & kCICMDCommand)
+        {
+            reader.ReadGroup(8);
+        }
+
+        if (header.m_dwFlags & kTimeSync)
+        {
+            reader.ReadGroup(8);
+        }
+
+        if (header.m_dwFlags & kEchoRequest)
+        {
+            reader.ReadGroup(4);
+        }
+
+        if (header.m_dwFlags & kEchoResponse)
+        {
+            reader.ReadGroup(8);
+        }
+
+        if (header.m_dwFlags & kFlow)
+        {
+            reader.ReadGroup(6);
+        }
+
+        DWORD result = checksum(data, reader.GetOffset());
+
+        while (!reader.AtEOF())
+        {
+            const stFragmentHeader* fragment = (stFragmentHeader*) reader.ReadGroup(sizeof(stFragmentHeader));
+
+            reader.ReadGroup(fragment->m_wSize - sizeof(stFragmentHeader));
+
+            result += checksum(fragment, fragment->m_wSize);
+        }
+
+        return result;
+    }
+
+    return checksum(data, header.m_wSize);
+}
+
+static DWORD checksumPacket(cPacket *packet, ChecksumXorGenerator& xorGen)
+{
+    stTransitHeader *header = packet->GetTransit();
+    DWORD xorVal = (header->m_dwFlags & kEncryptedChecksum) ? xorGen.get(header->m_dwSequence) : 0;
+    return checksumHeader(*header) + (checksumContent(*header, packet->GetPayload()) ^ xorVal);
+}
+
 void cNetwork::SendLSPacket(cPacket *Packet, bool IncludeSeq, bool IncrementSeq)
 {
-#ifndef TerrainOnly
 	stTransitHeader *Head = Packet->GetTransit();
+
+    //calc size (remove header from length)
+    Head->m_wSize = Packet->GetLength() - sizeof(stTransitHeader);
 
 	if (IncrementSeq)
 	{
-		m_siLoginServer.m_iSendSequence++;
+        m_siLoginServer.m_dwSendSequence++;
 	}
 
 	if (IncludeSeq) {
-		Head->m_dwSequence = m_siLoginServer.m_iSendSequence;
+        Head->m_dwSequence = m_siLoginServer.m_dwSendSequence;
 		Head->m_wTime = GetTime();
 	}
 	else {
@@ -225,44 +335,11 @@ void cNetwork::SendLSPacket(cPacket *Packet, bool IncludeSeq, bool IncrementSeq)
 		Head->m_wTime = 0;
 	}
 
-	if (m_siLoginServer.m_dwFlags & SF_SHOOK)
-	{
-		Head->m_wID = m_siLoginServer.m_wLogicalID;
-		Head->m_wTable = m_siLoginServer.m_wTable;
-	}
-	else
-	{
-		Head->m_wID = 0;
-		Head->m_wTable = 0;
-	}
-
-	if (Packet->GetTransit()->m_dwFlags & 0x200 ||
-		Packet->GetTransit()->m_dwFlags & 0x100000)
-	{
-		if (m_siLoginServer.m_dwFlags & SF_CRCSEEDS)
-		{
-			DWORD dwNewCRC, dwXorVal;
-			dwNewCRC = Calc200_CRC( Packet->GetData() );
-			dwXorVal = GetSendXORVal( m_siLoginServer.m_pdwSendCRC );
-			dwNewCRC ^= dwXorVal;
-			dwNewCRC += CalcTransportCRC( (DWORD *)Packet->GetData() );
-			Packet->GetTransit()->m_dwCRC = dwNewCRC;
-			Packet->m_dwSeed = dwXorVal; //Save XOR value - lost packets need this
-		}
-		else
-		{
-			m_Interface->OutputConsoleString("LS - trying to send 0x200 with no seeds, 'tard!");
-			if (IncludeSeq)
-				m_siLoginServer.m_iSendSequence--;
-			delete Packet;
-			return;
-		}
-	}
-	else
-		CalcCRC(Packet->GetData(), Packet->GetLength());//non-0x200 generic CRC
+	Head->m_wID = m_siLoginServer.m_wLogicalID;
+	Head->m_wTable = m_siLoginServer.m_wTable;
+	Head->m_dwCRC = checksumPacket(Packet, m_siLoginServer.clientXorGen);
 
 	SendPacket(Packet, &m_siLoginServer);
-#endif
 }
 
 void cNetwork::SendLostPacket(int iSendSequence, stServerInfo *Target)
@@ -279,11 +356,8 @@ void cNetwork::SendLostPacket(int iSendSequence, stServerInfo *Target)
 			{
 				Packet->GetTransit()->m_wTime = GetTime();
 				Packet->GetTransit()->m_dwFlags = 0x00000201;
-				DWORD dwNewCRC;
-				dwNewCRC = Calc200_CRC( Packet->GetData() );
-				dwNewCRC ^= Packet->m_dwSeed;
-				dwNewCRC += CalcTransportCRC( (DWORD *)Packet->GetData() );
-				Packet->GetTransit()->m_dwCRC = dwNewCRC;
+				//DWORD dwNewCRC;
+				//Packet->GetTransit()->m_dwCRC = dwNewCRC;
 
 				sendto(m_sSocket, (char *)Packet->GetData(), Packet->GetLength(), NULL, (SOCKADDR *)&Target->m_saServer, sizeof( SOCKADDR ) );
 				Unlock();
@@ -292,7 +366,6 @@ void cNetwork::SendLostPacket(int iSendSequence, stServerInfo *Target)
 			else
 			{
 				Packet->GetTransit()->m_wTime = GetTime();
-				CalcCRC(Packet->GetData(), Packet->GetLength());
 				sendto(m_sSocket, (char *)Packet->GetData(), Packet->GetLength(), NULL, (SOCKADDR *)&Target->m_saServer, sizeof( SOCKADDR ) );
 				Unlock();
 				return;
@@ -311,6 +384,15 @@ void cNetwork::SendPacket(cPacket *Packet, stServerInfo *Target)
 
 	BYTE *pbData = Packet->GetData();
 	int iLength = Packet->GetLength();
+
+    if (Packet->GetTransit()->m_dwFlags == kConnectResponse)
+    {
+        Target->m_saServer.sin_port = htons(Target->m_wBasePort + 1);
+    }
+    else
+    {
+        Target->m_saServer.sin_port = htons(Target->m_wBasePort);
+    }
 
 	int tp = sendto(m_sSocket, (char *) pbData, iLength, NULL, (SOCKADDR *)&Target->m_saServer, sizeof( SOCKADDR ) );
 
@@ -351,40 +433,6 @@ WORD cNetwork::GetTime()
 	return (WORD)((GetTickCount() - m_dwStartTicks) / 500.0f);
 }
 
-void cNetwork::WakeServer(stServerInfo *Server)
-{
-	static BYTE PACKET_ONE[] =
-	{
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x08, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00
-	};
-	//sequence should be BLANK, probably need to put a CHECK here
-
-	for (int i=0;i<3;i++) {
-		cPacket *ConnPacket = new cPacket();
-		ConnPacket->Add(PACKET_ONE, sizeof(PACKET_ONE));
-		SendPacket(ConnPacket, Server);
-	}
-	Lock();
-	Server->m_saServer.sin_port = htons(ntohs(Server->m_saServer.sin_port)+1);
-	Unlock();
-	for (int i=0;i<3;i++) {
-		cPacket *ConnPacket = new cPacket();
-		ConnPacket->Add(PACKET_ONE, sizeof(PACKET_ONE));
-		SendPacket(ConnPacket, Server);
-	}
-	Lock();
-	Server->m_saServer.sin_port = htons(ntohs(Server->m_saServer.sin_port)-1);
-
-	Server->m_dwFlags |= SF_AWAKE;
-	Unlock();
-
-	m_Interface->OutputConsoleString("Waking %s...", inet_ntoa(Server->m_saServer.sin_addr));
-}
-
 void cNetwork::Connect()
 {
 	m_Interface->OutputConsoleString("--- New Session... Connecting... ---");
@@ -392,35 +440,25 @@ void cNetwork::Connect()
 	m_Interface->SetInterfaceMode(eConnecting);
 	m_Interface->SetConnProgress(0);
 
-	static BYTE PACKET_TWO_A[] = {//
-		/*                                              CRC											*/
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x28, 0x52, 0xbd, 0x8e, 0x00, 0x00, 0x00, 0x00,
-		/*SIZE 			   		*/
-		0x46, 0x01, 0x00, 0x00 };
-
 	//Clear all connection stuff, incase of repeated connect attempts.
 	Reset();
-	//Awaken the connection before sending login data.
-	//WakeServer(&m_siLoginServer);
 
-	for (int i=0;i<1;i++)
-	{
-		cPacket *LoginPacket = new cPacket();
-		LoginPacket->Add(PACKET_TWO_A, sizeof(PACKET_TWO_A));
-        LoginPacket->Add(std::string("1802"));
-        LoginPacket->Add((DWORD)0x00000116);    //Actually a size of data left?
-        LoginPacket->Add((DWORD)0x40000002);
-        LoginPacket->Add((DWORD)0);
-        LoginPacket->Add((DWORD)time(NULL));
-        LoginPacket->Add(std::string(m_zAccountName));
-		LoginPacket->Add((DWORD) 0);
-		LoginPacket->Add((DWORD) 0x000000F6);
-		LoginPacket->Add((WORD) 0xF480);
-		LoginPacket->Add(m_zTicket, m_zTicketSize);
+	cPacket *LoginPacket = new cPacket();
+    stTransitHeader header;
+    header.m_dwFlags = 0x00010000;
+    LoginPacket->Add(&header, sizeof(stTransitHeader));
+    LoginPacket->Add(std::string("1802"));
+    LoginPacket->Add((DWORD)0x00000116);    //Actually a size of data left?
+    LoginPacket->Add((DWORD)0x40000002);
+    LoginPacket->Add((DWORD)0);
+    LoginPacket->Add((DWORD)time(NULL));
+    LoginPacket->Add(std::string(m_zAccountName));
+	LoginPacket->Add((DWORD) 0);
+	LoginPacket->Add((DWORD) 0x000000F6);
+	LoginPacket->Add((WORD) 0xF480);
+	LoginPacket->Add(m_zTicket, m_zTicketSize);
 
-		LoginPacket->Set(0x10, LoginPacket->GetLength() - 0x14);	//calc size (remove header from length)
-		SendLSPacket(LoginPacket, true, false);
-	}
+	SendLSPacket(LoginPacket, true, false);
 
 	m_siLoginServer.m_dwConnectAttempts++;
 	m_siLoginServer.m_dwLastConnectAttempt = GetTickCount();
@@ -444,20 +482,20 @@ void cNetwork::CloseConnection(stServerInfo *Server)
 
 void cNetwork::Disconnect()
 {
-	if (m_siLoginServer.m_dwFlags & SF_AWAKE) {
+	if (m_siLoginServer.m_dwFlags & SF_CONNECTED) {
 		CloseConnection(&m_siLoginServer);
 
 		Lock();
-		m_siLoginServer.m_dwFlags &= ~SF_AWAKE;
+		m_siLoginServer.m_dwFlags &= ~SF_CONNECTED;
 		Unlock();
 	}
 	for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
 	{
-		if (i->m_dwFlags & SF_AWAKE) {
+		if (i->m_dwFlags & SF_CONNECTED) {
 			CloseConnection(&*i);
 
 			Lock();
-			i->m_dwFlags &= ~SF_AWAKE;
+			i->m_dwFlags &= ~SF_CONNECTED;
 			Unlock();
 		}
 	}
@@ -515,7 +553,7 @@ void cNetwork::CheckPings()
 		}
 
 		if ((m_siLoginServer.m_dwFlags & SF_CRCSEEDS) &&
-			(m_siLoginServer.m_dwFlags & SF_SYNC))
+			(m_siLoginServer.m_dwFlags & SF_CONNECTED))
 		{
 			if (m_siLoginServer.m_dwLastSyncSent < (GetTickCount() - 2000))
 			{
@@ -533,7 +571,7 @@ void cNetwork::CheckPings()
 			}
 
 			if ((j.m_dwFlags & SF_CRCSEEDS) &&
-				(j.m_dwFlags & SF_SYNC))
+                (j.m_dwFlags & SF_CONNECTED))
 			{
 				if (j.m_dwLastSyncSent < (GetTickCount() - 2000))
 				{
@@ -550,7 +588,7 @@ void cNetwork::Run()
 	while (!m_bQuit)
 	{
 		//keep trying to connect to login server if first time doesn't work
-		if (!(m_siLoginServer.m_dwFlags & SF_SHOOK))
+		if (!(m_siLoginServer.m_dwFlags & SF_CONNECTED))
 		{
 			if ((m_siLoginServer.m_dwLastConnectAttempt + 10000) < GetTickCount())
 			{
@@ -614,602 +652,615 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 
 	stTransitHeader *Head = (stTransitHeader *) Packet->GetData();
 	BYTE *Data = Packet->GetData() + sizeof(stTransitHeader);
-	int iPos = 0;
+
+    cByteStream stream(Data, Head->m_wSize);
 
 	//Update our received sequence, if necessary
 	if (Head->m_dwSequence > m_siLoginServer.m_dwRecvSequence)
 		m_siLoginServer.m_dwRecvSequence = Head->m_dwSequence;
 
-	DWORD dwType = Head->m_dwFlags;
+	DWORD dwFlags = Head->m_dwFlags;
 
-	if ((~m_siLoginServer.m_dwFlags & SF_SHOOK) || (Head->m_wTable != m_siLoginServer.m_wTable))
-	{
-		//Our 'table' ID isn't the same, are they telling us ours?
-		if ((~dwType & 0x00000080) && (~dwType & 0x00000100) && (~dwType & 0x00800000)
-			&& (~dwType & 0x00000800))
-		{
-			m_Interface->OutputConsoleString("LS: Wrong Table: Hooked: %i, Table: %04X/%04X, Type: %08X",
-				(int) (~m_siLoginServer.m_dwFlags & SF_SHOOK),
-				m_siLoginServer.m_wTable, Head->m_wTable,
-				dwType);
-			delete Packet;
-			return;
-		}
-	}
+    if (dwFlags & kRetransmission)
+    {
+        //Flags a packet that has been resent
+        dwFlags &= ~kRetransmission;
+    }
+    if (dwFlags & kEncryptedChecksum)
+    {
+        //TODO: Check the checksum
+        dwFlags &= ~kEncryptedChecksum;
+    }
+    if (dwFlags & kTimeSync)
+    {
+        double serverTime = stream.ReadDouble();
 
-	if (dwType & 0x00000001) { //Flags a packet that has been resent
-		dwType &= ~0x00000001;
-	}
-	if (dwType & 0x00002000) { //Server issued a close-connection request?
-		m_Interface->OutputConsoleString("Login server wants connection closed?");
-		dwType &= ~0x00002000;
-	}
-	if (dwType & 0x00100000) { //These are sent every 20 seconds, they DO increment sequence
-		double serverTime = *((double *)&Data[iPos]);
-		time_t sT = (DWORD) serverTime;
+        time_t sT = (DWORD)serverTime;
 		time_t offset = time(NULL) - sT;
 		char *woohoo = ctime(&offset);
 
 		m_siLoginServer.m_dwLastSyncRecv = GetTickCount();
 		m_siLoginServer.m_flServerTime = serverTime;
-		m_siLoginServer.m_dwFlags |= SF_SYNC;
 
-		dwType &= ~0x00100000;
-		iPos += 8;
-	}
-	if (dwType & 0x00200000) { //*Shrug* some DWORD and WORD
-		dwType &= ~0x00200000;
-		iPos += 6;
-	}
-	if (dwType & 0x00800000) { //Displays a server error
-		ServerLoginError( *((DWORD *)&Data[iPos]) );
-
-		dwType &= ~0x00800000;
-		iPos += 4;
+        dwFlags &= ~kTimeSync;
 	}
 
-	switch (dwType)
-	{
-	case 0x00000000: //stripped packets
-		{
-			break;
-		}
-	case 0x00000002: //requests lost packets
-		{
-			DWORD packetCount = *((DWORD *)&Data[iPos]); iPos += 4;
-			for (int i = 0; i < (int)packetCount; i++)
-			{
-				DWORD packetSeq = *((DWORD *)&Data[iPos]); iPos += 4;
-				SendLostPacket(packetSeq, &m_siLoginServer);
-			}
+    if (dwFlags & kAckSequence)
+    {
+        m_siLoginServer.m_dwSendSequence = max(m_siLoginServer.m_dwSendSequence, stream.ReadDWORD());
 
-			break;
-		}
-	case 0x00000004: //ping
-		{
-			Lock();
-			DWORD serverSequence = *((DWORD *)&Data[iPos]);
-			if ((int)serverSequence < m_siLoginServer.m_iSendSequence)
-			{
-				//allow 1000 latency
-				if ((m_siLoginServer.m_dwLastPacketSent + 1000) < GetTickCount())
-				{
-					//server lost some packets
-					for (int i = serverSequence + 1; i <= m_siLoginServer.m_iSendSequence; i++)
-					{
-						SendLostPacket(i, &m_siLoginServer);
-					}
-				}
-			}
-			else if ((int)serverSequence > m_siLoginServer.m_iSendSequence)
-			{
-				m_Interface->OutputConsoleString("Login sequence is AHEAD of the client (previous connection?)");
-			}
-			Unlock();
+        // TODO: Clear saved packets with sequences before this
 
-			break;
-		}
-	case 0x00000008: //declines requested packets
+        dwFlags &= ~kAckSequence;
+    }
 
-		break;
-	case 0x00000040: //progress vial on left, maybe it calculates lag/ping/whatever ?
-		{
-			iConnPacketCount++;
-//			m_Interface->OutputConsoleString("Progress Packet!");
+    if (dwFlags & kConnectRequest)
+    {
+        // Connection request from the server
+        m_siLoginServer.m_wTable = Head->m_wTable;
+        m_siLoginServer.m_dwLastSyncRecv = GetTickCount();
 
-			m_Interface->SetConnProgress(iConnPacketCount/10.0f);
-			static BYTE PROGRESSRESPONSE_PACKET[] =	{
-				0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0xfa, 0x71, 0xf9, 0xba, 0xdd, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00
-			};
+        m_siLoginServer.m_dwFlags |= SF_CONNECTED;
 
-			cPacket *PResponse = new cPacket();
-			PResponse->Add(PROGRESSRESPONSE_PACKET, sizeof(PROGRESSRESPONSE_PACKET));
-			SendLSPacket(PResponse, false, false);
-			break;
-		}
-	case 0x00000080: //handshake - gives us our logical ID and table
-		{
-			if ( m_siLoginServer.m_dwFlags & SF_SHOOK )
-			{
-				//There shouldn't be two, put a debug message here
-			}
-			m_siLoginServer.m_wTable = Head->m_wTable;
+        m_siLoginServer.m_flServerTime = stream.ReadDouble(); //Time sync
+        m_siLoginServer.m_qwCookie = stream.ReadQWORD();
+        m_siLoginServer.m_wLogicalID = stream.ReadWORD();
+        WORD paddingWord = stream.ReadWORD();
 
-			m_siLoginServer.m_dwLastSyncRecv = GetTickCount();
-			m_siLoginServer.m_flServerTime = *((double *)&Data[iPos]); //Time sync
-			iPos += sizeof(double);
+        DWORD serverSeed = stream.ReadDWORD();
+        DWORD clientSeed = stream.ReadDWORD();
 
-			if (*((DWORD *)&Data[iPos]) != 0x00)
-			{	// Improper, but safe to assume its a version string
-				DWORD versionSize = *((DWORD *)&Data[iPos]);
-				iPos += 4;
-				char *serverVersion = new char[versionSize];
-				memcpy(serverVersion, &Data[iPos], versionSize);
-				iPos += versionSize;
-				//if (strcmp(CLIENT_VERSION, serverVersion))
-				//{
-				//	char text[500];
-				//	sprintf(text, "Client version: %s Server version: %s", CLIENT_VERSION, serverVersion);
-				//	MessageBox(NULL, text, "Error", MB_OK);
-				//	delete []serverVersion;
-				//	Disconnect();
-				//	break;
-				//}
-				delete []serverVersion;
-			}
+        m_siLoginServer.serverXorGen.init(serverSeed);
+        m_siLoginServer.clientXorGen.init(clientSeed);
+        m_siLoginServer.m_dwFlags |= SF_CRCSEEDS;
 
-			iPos += 8; //blank DWORDs
+        DWORD unknownPadding = stream.ReadDWORD();
 
-			m_siLoginServer.m_wLogicalID = *((WORD *)&Data[iPos]);
-			m_siLoginServer.m_dwFlags |= SF_SHOOK;
-			iPos += 2;
+        SendConnectResponse();
+        Sleep(300);
+        SendConnectResponse();
 
-			DWORD versionSize = *((DWORD *)&Data[iPos]);
-			iPos += 4;
-			char *serverVersion = new char[versionSize];
-			memcpy(serverVersion, &Data[iPos], versionSize);
-			iPos += versionSize;
-			m_Interface->OutputConsoleString("Server Version: %s, Table: %04X", serverVersion, m_siLoginServer.m_wTable);
-			delete []serverVersion;
-			
-			//Screw the buffer position, we'll make a few assumptions for now
-			DWORD input8[8];
-			DWORD input3[3];
-			memcpy(input8, &Data[0x32], 8 * sizeof(DWORD));
-			memcpy(input3, &Data[0x5A], 3 * sizeof(DWORD));
-			DWORD *seeds = DecryptSeeds(input8, input3);
-			m_siLoginServer.m_dwRecvCRCSeed = seeds[0];
-			m_siLoginServer.m_dwSendCRCSeed = seeds[1];
-			m_siLoginServer.m_pdwRecvCRC	= m_siLoginServer.m_lpdwRecvCRC;
-			m_siLoginServer.m_pdwSendCRC	= m_siLoginServer.m_lpdwSendCRC;
-			GenerateCRCs(m_siLoginServer.m_dwSendCRCSeed, m_siLoginServer.m_dwRecvCRCSeed, m_siLoginServer.m_pdwSendCRC, m_siLoginServer.m_pdwRecvCRC);
-			m_siLoginServer.m_dwFlags |= SF_CRCSEEDS;
+        dwFlags &= ~kConnectRequest;
+    }
+    
+    if (dwFlags & kNetError1)
+    {
+        //?  I seem to get these when connecting with a stale gls ticket
+        MessageBox(NULL, "Stale GLS Ticket", "Error", MB_OK);
+        dwFlags &= ~kNetError1;
+    }
 
-			static BYTE HANDSHAKE_PACKET[] = {
-				0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0xf5, 0x71, 0xf4, 0xba, 0x98, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00
-			};
-			cPacket *Handshake = new cPacket();
-			Handshake->Add(HANDSHAKE_PACKET, sizeof(HANDSHAKE_PACKET));
-			SendLSPacket(Handshake, false, false);
-			break;
-		}
-	case 0x00000100: //update CRC
-		m_Interface->OutputConsoleString("Received 0x100 on login server?");
-		break;
-	case 0x00000200: //game-related messages
+    if (dwFlags & kBlobFragments)
+    {
+        //Loop through the fragments
+        while (!stream.AtEOF())
+        {
+            const stFragmentHeader *fragHead = (const stFragmentHeader *) stream.ReadGroup(sizeof(stFragmentHeader));
+            WORD payloadSize = fragHead->m_wSize - sizeof(stFragmentHeader);
+            BYTE *fragData = stream.ReadGroup(payloadSize);
 
-		//Loop through the fragments
-		while ((iPos + sizeof(stFragmentHeader)) < Head->m_wSize)
-		{
-			stFragmentHeader *FragHead	= (stFragmentHeader *)&Data[iPos];
-			BYTE *FragData				= sizeof(stFragmentHeader) + &Data[iPos];
-			iPos += FragHead->m_wSize;
+        	if (fragHead->m_wCount == 1)
+        	{
+                cMessage *Msg = new cMessage(fragData, fragHead);
+        		ProcessMessage(Msg, &m_siLoginServer);
+        	}
+        	else
+        	{
+        		//Check for existing fragments
+        		bool bAdded = false;
+                for (std::list< cMessage * >::iterator it = m_siLoginServer.m_lIncomingMessages.begin(); it != m_siLoginServer.m_lIncomingMessages.end(); it++)
+        		{
+        			if (bAdded)
+        				break;
+        
+        			cMessage *scan = *it;
+        			if ( scan->m_dwSequence == fragHead->m_dwSequence)
+        			{
+        				scan->AddChunk(fragData, payloadSize, fragHead->m_wIndex);
+        				bAdded = true;
+        
+        				if ( scan->IsComplete() )
+        				{
+        					ProcessMessage(scan, &m_siLoginServer);
+        					m_siLoginServer.m_lIncomingMessages.erase(it);
+        				}
+        				break;
+        			}
+        		}
+        
+        		//No existing group matches, create one
+        		if (!bAdded)
+        		{
+        			cMessage *Msg = new cMessage(fragData, fragHead);
+        			m_siLoginServer.m_lIncomingMessages.push_back(Msg);
+        		}
+        	}
+        }
 
-			if (FragHead->m_wCount == 1)
-			{
-				cMessage *Msg = new cMessage(FragData, FragHead);
-				ProcessMessage(Msg, &m_siLoginServer);
-			}
-			else
-			{
-				if (m_siLoginServer.m_lIncomingMessages.size() > 0)
-				{
-					//Check for existing fragments
-					bool bAdded = false;
-					std::list< cMessage * >::iterator it;
-					for (it = m_siLoginServer.m_lIncomingMessages.begin(); it != m_siLoginServer.m_lIncomingMessages.end(); it++)
-					{
-						if (bAdded)
-							break;
+        dwFlags &= ~kBlobFragments;
+    }
 
-						cMessage *scan = *it;
-						if ( scan->m_dwSequence == FragHead->m_dwSequence)
-						{
-							scan->AddChunk(FragData, FragHead->m_wSize - sizeof(stFragmentHeader), FragHead->m_wIndex);
-							bAdded = true;
+    if (dwFlags > 0)
+    {
+        m_Interface->OutputConsoleString("LS: Unhandled Flags: %08X", dwFlags);
+    }
 
-							if ( scan->IsComplete() )
-							{
-								ProcessMessage(scan, &m_siLoginServer);
-								m_siLoginServer.m_lIncomingMessages.erase(it);
-							}
-							break;
-						}
-					}
+    //   if (dwFlags & 0x00800000) { //Displays a server error
+    //       DWORD error = stream.ReadDWORD();
 
-					//No existing group matches, create one
-					if (!bAdded) //(it == m_siLoginServer.m_lIncomingMessages.end() )
-					{
-						cMessage *Msg = new cMessage(FragData, FragHead);
-						m_siLoginServer.m_lIncomingMessages.push_back(Msg);
-					}
-				}
-				else
-				{
-					cMessage *Msg = new cMessage(FragData, FragHead);
-					m_siLoginServer.m_lIncomingMessages.push_back(Msg);
-				}
-			}
-		}
-		break;
-	case 0x00000800: //login server redirect
-		Reset();
+    //       ServerLoginError( error );
 
-		SOCKADDR_IN tp;
-		memcpy(&tp, Data, sizeof(SOCKADDR_IN));
+    //       dwFlags &= ~0x00800000;
+    //}
 
-		char tps[50];
-		strcpy(tps, inet_ntoa(m_siLoginServer.m_saServer.sin_addr));
-		m_Interface->OutputConsoleString("Login Redirect: %s:%i -> %s:%i",
-								  tps,
-								  (int)ntohs(m_siLoginServer.m_saServer.sin_port),
-								  inet_ntoa(tp.sin_addr),
-								  (int)ntohs(tp.sin_port) );
 
-		memcpy(&m_siLoginServer.m_saServer, Data, sizeof(SOCKADDR_IN));
-		Connect();
-		break;
-	case 0x00020000:
-		{
-			SOCKADDR_IN tpaddr;
-			memcpy(&tpaddr, Data, sizeof(tpaddr));
-			DWORD dwAck = *((DWORD *) (Data+sizeof(tpaddr)));
+	//case 0x00000000: //stripped packets
+	//	{
+	//		break;
+	//	}
+	//case 0x00000002: //requests lost packets
+	//	{
+	//		DWORD packetCount = *((DWORD *)&Data[iPos]); iPos += 4;
+	//		for (int i = 0; i < (int)packetCount; i++)
+	//		{
+	//			DWORD packetSeq = *((DWORD *)&Data[iPos]); iPos += 4;
+	//			SendLostPacket(packetSeq, &m_siLoginServer);
+	//		}
 
-			char tps[50];
-			strcpy(tps, inet_ntoa(tpaddr.sin_addr));
-			if (!m_pActiveWorld)
-				m_Interface->OutputConsoleString("LS: Setting Worldserver: %s:%i...", tps, ntohs(tpaddr.sin_port));
-			else
-				m_Interface->OutputConsoleString("LS: Worldserver Redirect: %s:%i->%s:%i...", inet_ntoa(m_pActiveWorld->m_saServer.sin_addr), ntohs(m_pActiveWorld->m_saServer.sin_port), tps, ntohs(tpaddr.sin_port));
-			AddWorldServer(tpaddr);
-			SetActiveWorldServer(tpaddr);
+	//		break;
+	//	}
+	//case 0x00000004: //ping
+	//	{
+	//		Lock();
+	//		DWORD serverSequence = *((DWORD *)&Data[iPos]);
+	//		if ((int)serverSequence < m_siLoginServer.m_iSendSequence)
+	//		{
+	//			//allow 1000 latency
+	//			if ((m_siLoginServer.m_dwLastPacketSent + 1000) < GetTickCount())
+	//			{
+	//				//server lost some packets
+	//				for (int i = serverSequence + 1; i <= m_siLoginServer.m_iSendSequence; i++)
+	//				{
+	//					SendLostPacket(i, &m_siLoginServer);
+	//				}
+	//			}
+	//		}
+	//		else if ((int)serverSequence > m_siLoginServer.m_iSendSequence)
+	//		{
+	//			m_Interface->OutputConsoleString("Login sequence is AHEAD of the client (previous connection?)");
+	//		}
+	//		Unlock();
 
-			//Now tell LS that we've added it
-			BYTE acceptServer[] =
-			{
-				0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x02, 0x00,
-				0x00, 0x00, 0x00, 0x00, 
-				0x40, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00
-//				,0x5c, 0x00, 0x00, 0x00
-			};
+	//		break;
+	//	}
+	//case 0x00000008: //declines requested packets
 
-			for (int i=0; i<4; i++)
-			{
-				//gotta do this shit 4 times
-				WakeServer(m_pActiveWorld);
-
-				cPacket *AcceptServer = new cPacket();
-				AcceptServer->Add(acceptServer, sizeof(acceptServer));
-				AcceptServer->Add(dwAck);
-				SendLSPacket(AcceptServer, false, false);
-			}
-
-			break;
-		}
-	default:
-		m_Interface->OutputConsoleString("LS: Unknown Packet Type: %08X", dwType);
-		break;
-	}
+	//	break;
+	//case 0x00000100: //update CRC
+	//	m_Interface->OutputConsoleString("Received 0x100 on login server?");
+	//	break;
+//	case 0x00000200: //game-related messages
+//
+//		//Loop through the fragments
+//		while ((iPos + sizeof(stFragmentHeader)) < Head->m_wSize)
+//		{
+//			stFragmentHeader *FragHead	= (stFragmentHeader *)&Data[iPos];
+//			BYTE *FragData				= sizeof(stFragmentHeader) + &Data[iPos];
+//			iPos += FragHead->m_wSize;
+//
+//			if (FragHead->m_wCount == 1)
+//			{
+//				cMessage *Msg = new cMessage(FragData, FragHead);
+//				ProcessMessage(Msg, &m_siLoginServer);
+//			}
+//			else
+//			{
+//				if (m_siLoginServer.m_lIncomingMessages.size() > 0)
+//				{
+//					//Check for existing fragments
+//					bool bAdded = false;
+//					std::list< cMessage * >::iterator it;
+//					for (it = m_siLoginServer.m_lIncomingMessages.begin(); it != m_siLoginServer.m_lIncomingMessages.end(); it++)
+//					{
+//						if (bAdded)
+//							break;
+//
+//						cMessage *scan = *it;
+//						if ( scan->m_dwSequence == FragHead->m_dwSequence)
+//						{
+//							scan->AddChunk(FragData, FragHead->m_wSize - sizeof(stFragmentHeader), FragHead->m_wIndex);
+//							bAdded = true;
+//
+//							if ( scan->IsComplete() )
+//							{
+//								ProcessMessage(scan, &m_siLoginServer);
+//								m_siLoginServer.m_lIncomingMessages.erase(it);
+//							}
+//							break;
+//						}
+//					}
+//
+//					//No existing group matches, create one
+//					if (!bAdded) //(it == m_siLoginServer.m_lIncomingMessages.end() )
+//					{
+//						cMessage *Msg = new cMessage(FragData, FragHead);
+//						m_siLoginServer.m_lIncomingMessages.push_back(Msg);
+//					}
+//				}
+//				else
+//				{
+//					cMessage *Msg = new cMessage(FragData, FragHead);
+//					m_siLoginServer.m_lIncomingMessages.push_back(Msg);
+//				}
+//			}
+//		}
+//		break;
+//	case 0x00000800: //login server redirect
+//		Reset();
+//
+//		SOCKADDR_IN tp;
+//		memcpy(&tp, Data, sizeof(SOCKADDR_IN));
+//
+//		char tps[50];
+//		strcpy(tps, inet_ntoa(m_siLoginServer.m_saServer.sin_addr));
+//		m_Interface->OutputConsoleString("Login Redirect: %s:%i -> %s:%i",
+//								  tps,
+//								  (int)ntohs(m_siLoginServer.m_saServer.sin_port),
+//								  inet_ntoa(tp.sin_addr),
+//								  (int)ntohs(tp.sin_port) );
+//
+//		memcpy(&m_siLoginServer.m_saServer, Data, sizeof(SOCKADDR_IN));
+//		Connect();
+//		break;
+//	case 0x00020000:
+//		{
+//			SOCKADDR_IN tpaddr;
+//			memcpy(&tpaddr, Data, sizeof(tpaddr));
+//			DWORD dwAck = *((DWORD *) (Data+sizeof(tpaddr)));
+//
+//			char tps[50];
+//			strcpy(tps, inet_ntoa(tpaddr.sin_addr));
+//			if (!m_pActiveWorld)
+//				m_Interface->OutputConsoleString("LS: Setting Worldserver: %s:%i...", tps, ntohs(tpaddr.sin_port));
+//			else
+//				m_Interface->OutputConsoleString("LS: Worldserver Redirect: %s:%i->%s:%i...", inet_ntoa(m_pActiveWorld->m_saServer.sin_addr), ntohs(m_pActiveWorld->m_saServer.sin_port), tps, ntohs(tpaddr.sin_port));
+//			AddWorldServer(tpaddr);
+//			SetActiveWorldServer(tpaddr);
+//
+//			//Now tell LS that we've added it
+//			BYTE acceptServer[] =
+//			{
+//				0x00, 0x00, 0x00, 0x00,
+//				0x00, 0x00, 0x02, 0x00,
+//				0x00, 0x00, 0x00, 0x00, 
+//				0x40, 0x00, 0x00, 0x00,
+//				0x00, 0x00, 0x00, 0x00
+////				,0x5c, 0x00, 0x00, 0x00
+//			};
+//
+//			for (int i=0; i<4; i++)
+//			{
+//				//gotta do this shit 4 times
+//				//WakeServer(m_pActiveWorld);
+//
+//				cPacket *AcceptServer = new cPacket();
+//				AcceptServer->Add(acceptServer, sizeof(acceptServer));
+//				AcceptServer->Add(dwAck);
+//				SendLSPacket(AcceptServer, false, false);
+//			}
+//
+//			break;
+//		}
+//	default:
+//		m_Interface->OutputConsoleString("LS: Unknown Packet Type: %08X", dwFlags);
+//		break;
+//	}
 
 	delete Packet;
 }
 
+void cNetwork::SendConnectResponse()
+{
+    stTransitHeader header;
+    header.m_dwFlags = 0x00080000;
+    cPacket *connectReply = new cPacket();
+    connectReply->Add(&header, sizeof(header));
+    connectReply->Add(m_siLoginServer.m_qwCookie);
+    SendLSPacket(connectReply, false, false);
+}
+
 void cNetwork::ProcessWSPacket(cPacket *Packet, stServerInfo *Server)
 {
-//	m_Interface->OutputConsoleString("Worldserver Packet...");
-	stTransitHeader *Head = (stTransitHeader *) Packet->GetData();
-	BYTE *Data = Packet->GetData() + sizeof(stTransitHeader);
-	int iPos = 0;
-
-	//Update our received sequence, if necessary
-	if (Head->m_dwSequence > Server->m_dwRecvSequence)
-		Server->m_dwRecvSequence = Head->m_dwSequence;
-
-	DWORD dwType = Head->m_dwFlags;
-
-	if ((~Server->m_dwFlags & SF_SHOOK) || Head->m_wTable != Server->m_wTable)
-	{
-		//Our 'table' ID isn't the same, are they telling us ours?
-		if ((~dwType & 0x00000080) && (~dwType & 0x00000100))
-		{
-			m_Interface->OutputConsoleString("WS (%s:%i): Wrong Table: Hooked: %i, Table: %04X/%04X, Type: %08X",
-				inet_ntoa(Server->m_saServer.sin_addr), htons(Server->m_saServer.sin_port), 
-				(int) (~Server->m_dwFlags & SF_SHOOK),
-				Server->m_wTable, Head->m_wTable,
-				dwType);
-//			m_Interface->OutputConsoleString("Packet from wrong server??");
-			delete Packet;
-			return;
-		}
-	}
-
-//	m_Interface->OutputConsoleString("Sequence: %04X Packet: %04X", Head->m_dwSequence, dwType);
-
-	if (dwType & 0x00000001) { //Flags a packet that has been resent
-		dwType &= ~0x00000001;
-	}
-	if (dwType & 0x00002000) { //Server issued a close-connection request?
-		m_Interface->OutputConsoleString("WS (%s:%i): Wants connection closed?  Closing!",
-			inet_ntoa(Server->m_saServer.sin_addr), htons(Server->m_saServer.sin_port)
-			);
-		dwType &= ~0x00002000;
-		
-		CloseConnection(Server);
-	}
-	if (dwType & 0x00100000) { //These are sent every 20 seconds, they DO increment sequence
-		double serverTime = *((double *)&Data[iPos]);
-		time_t sT = (DWORD) serverTime;
-		time_t offset = time(NULL) - sT;
-		char *woohoo = ctime(&offset);
-
-		Server->m_dwLastSyncRecv = GetTickCount();
-		Server->m_flServerTime = serverTime;
-		Server->m_dwFlags |= SF_SYNC;
-
-		dwType &= ~0x00100000;
-		iPos += 8;
-	}
-	if (dwType & 0x00200000) { //*Shrug* some DWORD and WORD
-		dwType &= ~0x00200000;
-		iPos += 6;
-	}
-	if (dwType & 0x00800000) { //Displays a server error
-		ServerLoginError( *((DWORD *)&Data[iPos]) );
-
-		dwType &= ~0x00800000;
-		iPos += 4;
-	}
-
-	switch (dwType)
-	{
-	case 0x00000000: //stripped packets
-		{
-			break;
-		}
-	case 0x00000002: //requests lost packets
-		{
-//			m_Interface->OutputConsoleString("Lost packet requested by server.");
-//			DWORD seqAsked = *((DWORD *)&Data[iPos]);
-//			SendLostPacket(seqAsked, Server);
-			DWORD packetCount = *((DWORD *)&Data[iPos]); iPos += 4;
-			for (int i = 0; i < (int)packetCount; i++)
-			{
-				DWORD packetSeq = *((DWORD *)&Data[iPos]); iPos += 4;
-				SendLostPacket(packetSeq, Server);
-			}
-
-			break;
-		}
-	case 0x00000004: //ping
-		{
-			Lock();
-			DWORD serverSequence = *((DWORD *)&Data[iPos]);
-			if ((int)serverSequence < Server->m_iSendSequence)
-			{
-				//allow 1000 latency
-				if ((Server->m_dwLastPacketSent + 1000) < GetTickCount())
-				{
-					//server lost some packets
-					for (int i = serverSequence + 1; i <= Server->m_iSendSequence; i++)
-					{
-						SendLostPacket(i, Server);
-					}
-				}
-			}
-			else if ((int)serverSequence > Server->m_iSendSequence)
-			{
-				m_Interface->OutputConsoleString("World sequence is AHEAD of the client (WTF?)");
-			}
-			Unlock();
-
-			break;
-		}
-	case 0x00000008: //declines requested packets
-
-		break;
-	case 0x00000100: //update CRC
-		{
-			Server->m_wTable = Head->m_wTable;
-			Server->m_wLogicalID = *((WORD *)&Data[0x0]);
-			Server->m_dwFlags |= SF_SHOOK;
-			DWORD input8[8];
-			DWORD input3[3];
-			memcpy(input8, &Data[0x12], 8 * sizeof(DWORD));
-			memcpy(input3, &Data[0x3A], 3 * sizeof(DWORD));
-			DWORD *seeds = DecryptSeeds(input8, input3);
-			Server->m_dwRecvCRCSeed = seeds[0];
-			Server->m_dwSendCRCSeed = seeds[1];
-			Server->m_pdwRecvCRC	= Server->m_lpdwRecvCRC;
-			Server->m_pdwSendCRC	= Server->m_lpdwSendCRC;
-			GenerateCRCs(Server->m_dwSendCRCSeed, Server->m_dwRecvCRCSeed, Server->m_pdwSendCRC, Server->m_pdwRecvCRC);
-			Server->m_dwFlags |= SF_CRCSEEDS;
-
-			m_Interface->OutputConsoleString("WS (%s:%i): New seeds set.  Table: %04X",
-				inet_ntoa(Server->m_saServer.sin_addr), htons(Server->m_saServer.sin_port), 
-				Server->m_wTable);
-
-			static BYTE acceptSeeds[] = {
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00
-			};
-			cPacket *Ack100 = new cPacket();
-			Ack100->Add(acceptSeeds, sizeof(acceptSeeds));
-			SendWSPacket(Ack100, Server, true, false);
-
-			break;
-		}
-	case 0x00000200: //game-related messages
-
-		//Loop through the fragments
-		while ((iPos + sizeof(stFragmentHeader)) < Head->m_wSize)
-		{
-			stFragmentHeader *FragHead	= (stFragmentHeader *)&Data[iPos];
-			BYTE *FragData				= sizeof(stFragmentHeader) + &Data[iPos];
-			iPos += FragHead->m_wSize;
-
-			if (FragHead->m_wCount == 1)
-			{
-				cMessage *Msg = new cMessage(FragData, FragHead);
-				ProcessMessage(Msg, Server);
-			}
-			else
-			{
-				//Check for existing fragments
-				if (Server->m_lIncomingMessages.size() > 0)
-				{
-					bool bAdded = false;
-					std::list< cMessage * >::iterator it;
-					for (it = Server->m_lIncomingMessages.begin(); it != Server->m_lIncomingMessages.end(); it++)
-					{
-						if (bAdded)
-							break;
-
-						cMessage *scan = *it;
-						if ( scan->m_dwSequence == FragHead->m_dwSequence)
-						{
-							bAdded = true;
-							scan->AddChunk(FragData, FragHead->m_wSize - sizeof(stFragmentHeader), FragHead->m_wIndex);
-							
-							if ( scan->IsComplete() )
-							{
-								ProcessMessage(scan, Server);
-								Server->m_lIncomingMessages.erase(it);
-							}
-							break;
-						}
-					}
-
-					//No existing group matches, create one
-					if (!bAdded) //(it == Server->m_lIncomingMessages.end() )
-					{
-						cMessage *Msg = new cMessage(FragData, FragHead);
-						Server->m_lIncomingMessages.push_back(Msg);
-					}
-				}
-				else
-				{
-					cMessage *Msg = new cMessage(FragData, FragHead);
-					Server->m_lIncomingMessages.push_back(Msg);
-				}
-			}
-		}
-		break;
-	case 0x00000400: //wtf?
-		{
-			static BYTE acceptWTF[] = {
-				0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00
-			};
-			cPacket *Ack400 = new cPacket();
-			Ack400->Add(acceptWTF, sizeof(acceptWTF));
-			SendWSPacket(Ack400, Server, false, false);
-			m_Interface->OutputConsoleString("Set output server to %s:%i...", inet_ntoa(Server->m_saServer.sin_addr), ntohs(Server->m_saServer.sin_port));
-
-			SetActiveWorldServer(Server->m_saServer);
-
-			//no idea if this is what i should do
-			double serverTime = *((double *)&Data[iPos]);
-			m_pActiveWorld->m_dwLastSyncRecv = GetTickCount();
-			m_pActiveWorld->m_flServerTime = serverTime;
-			m_pActiveWorld->m_dwFlags |= SF_SYNC;
-			break;
-		}
-	case 0x00010000:
-		{
-			//data: 0BAD70DD  (bad todd)
-
-			m_Interface->OutputConsoleString("10000 from %s:%i..", inet_ntoa(Server->m_saServer.sin_addr), ntohs(Server->m_saServer.sin_port));
-
-/*			DWORD dataSize = Packet->GetLength() - sizeof(stTransitHeader);
-			BYTE *data = Packet->GetData() + sizeof(stTransitHeader);
-			m_Interface->OutputConsoleString("10000: Contents:");
-			for (DWORD i = 0; i <= ((dataSize - (dataSize % 16)) / 16); i++)
-			{
-				char valbuff[128]; memset(valbuff, 0, 128);
-				char linebuff[128]; memset(linebuff, 0, 128);
-				char strbuff[128]; memset(strbuff, 0, 128);
-
-				strcat(strbuff, "; ");
-				for (DWORD j = i * 16; (j < ((i+1)*16)) && (j < dataSize); j++)
-				{
-					sprintf(valbuff, "%.1s", &data[j]);
-					strcat(strbuff, valbuff);
-					sprintf(valbuff, "%02X ", data[j]);
-					strcat(linebuff, valbuff);
-				}
-				strcat(linebuff, strbuff);
-				m_Interface->OutputConsoleString("%s", linebuff);
-			}*/
-
-			break;
-		}
-	case 0x00020000:
-		{
-			SOCKADDR_IN tpaddr;
-			memcpy(&tpaddr, Data, sizeof(tpaddr));
-			DWORD dwAck = *((DWORD *) (Data+sizeof(tpaddr)));
-
-			char outt[50];
-			strcpy(outt, inet_ntoa(m_pActiveWorld->m_saServer.sin_addr));
-			m_Interface->OutputConsoleString("WS: Worldserver Redirect: %s:%i->%s:%i...", outt, ntohs(m_pActiveWorld->m_saServer.sin_port), inet_ntoa(tpaddr.sin_addr), ntohs(tpaddr.sin_port));
-			stServerInfo *newserv = AddWorldServer(tpaddr);
-//			SetActiveWorldServer(tpaddr);
-
-			//woo, trying this out my ass...
-			newserv->m_dwLastSyncRecv = Server->m_dwLastSyncRecv;
-			newserv->m_flServerTime = Server->m_flServerTime;
-			if (Server->m_dwFlags & SF_SYNC)
-				newserv->m_dwFlags |= SF_SYNC;
-
-			//Now tell Last WS that we've added it
-			BYTE acceptServer[] =
-			{
-				0x00, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x02, 0x00,
-				0x00, 0x00, 0x00, 0x00, 
-				0x40, 0x00, 0x00, 0x00,
-				0x00, 0x00, 0x00, 0x00
-//				,0x5c, 0x00, 0x00, 0x00
-			};
-
-			WakeServer(newserv);
-
-			//Tell the last worldserver we're acking it
-			cPacket *AcceptServer = new cPacket();
-			AcceptServer->Add(acceptServer, sizeof(acceptServer));
-			AcceptServer->Add(dwAck);
-			SendWSPacket(AcceptServer, Server, false, false);
-
-			break;
-		}
-	default:
-		m_Interface->OutputConsoleString("WS: Unknown Packet Type: %08X", dwType);
-		break;
-	}
+////	m_Interface->OutputConsoleString("Worldserver Packet...");
+//	stTransitHeader *Head = (stTransitHeader *) Packet->GetData();
+//	BYTE *Data = Packet->GetData() + sizeof(stTransitHeader);
+//	int iPos = 0;
+//
+//	//Update our received sequence, if necessary
+//	if (Head->m_dwSequence > Server->m_dwRecvSequence)
+//		Server->m_dwRecvSequence = Head->m_dwSequence;
+//
+//	DWORD dwType = Head->m_dwFlags;
+//
+//	if ((~Server->m_dwFlags & SF_CONNECTED) || Head->m_wTable != Server->m_wTable)
+//	{
+//		//Our 'table' ID isn't the same, are they telling us ours?
+//		if ((~dwType & 0x00000080) && (~dwType & 0x00000100))
+//		{
+//			m_Interface->OutputConsoleString("WS (%s:%i): Wrong Table: Hooked: %i, Table: %04X/%04X, Type: %08X",
+//				inet_ntoa(Server->m_saServer.sin_addr), htons(Server->m_saServer.sin_port), 
+//                (int)(~Server->m_dwFlags & SF_CONNECTED),
+//				Server->m_wTable, Head->m_wTable,
+//				dwType);
+////			m_Interface->OutputConsoleString("Packet from wrong server??");
+//			delete Packet;
+//			return;
+//		}
+//	}
+//
+////	m_Interface->OutputConsoleString("Sequence: %04X Packet: %04X", Head->m_dwSequence, dwType);
+//
+//	if (dwType & 0x00000001) { //Flags a packet that has been resent
+//		dwType &= ~0x00000001;
+//	}
+//	if (dwType & 0x00002000) { //Server issued a close-connection request?
+//		m_Interface->OutputConsoleString("WS (%s:%i): Wants connection closed?  Closing!",
+//			inet_ntoa(Server->m_saServer.sin_addr), htons(Server->m_saServer.sin_port)
+//			);
+//		dwType &= ~0x00002000;
+//		
+//		CloseConnection(Server);
+//	}
+//	if (dwType & 0x00100000) { //These are sent every 20 seconds, they DO increment sequence
+//		double serverTime = *((double *)&Data[iPos]);
+//		time_t sT = (DWORD) serverTime;
+//		time_t offset = time(NULL) - sT;
+//		char *woohoo = ctime(&offset);
+//
+//		Server->m_dwLastSyncRecv = GetTickCount();
+//		Server->m_flServerTime = serverTime;
+//		Server->m_dwFlags |= SF_SYNC;
+//
+//		dwType &= ~0x00100000;
+//		iPos += 8;
+//	}
+//	if (dwType & 0x00200000) { //*Shrug* some DWORD and WORD
+//		dwType &= ~0x00200000;
+//		iPos += 6;
+//	}
+//	if (dwType & 0x00800000) { //Displays a server error
+//		ServerLoginError( *((DWORD *)&Data[iPos]) );
+//
+//		dwType &= ~0x00800000;
+//		iPos += 4;
+//	}
+//
+//	switch (dwType)
+//	{
+//	case 0x00000000: //stripped packets
+//		{
+//			break;
+//		}
+//	case 0x00000002: //requests lost packets
+//		{
+////			m_Interface->OutputConsoleString("Lost packet requested by server.");
+////			DWORD seqAsked = *((DWORD *)&Data[iPos]);
+////			SendLostPacket(seqAsked, Server);
+//			DWORD packetCount = *((DWORD *)&Data[iPos]); iPos += 4;
+//			for (int i = 0; i < (int)packetCount; i++)
+//			{
+//				DWORD packetSeq = *((DWORD *)&Data[iPos]); iPos += 4;
+//				SendLostPacket(packetSeq, Server);
+//			}
+//
+//			break;
+//		}
+//	case 0x00000004: //ping
+//		{
+//			Lock();
+//			DWORD serverSequence = *((DWORD *)&Data[iPos]);
+//			if ((int)serverSequence < Server->m_iSendSequence)
+//			{
+//				//allow 1000 latency
+//				if ((Server->m_dwLastPacketSent + 1000) < GetTickCount())
+//				{
+//					//server lost some packets
+//					for (int i = serverSequence + 1; i <= Server->m_iSendSequence; i++)
+//					{
+//						SendLostPacket(i, Server);
+//					}
+//				}
+//			}
+//			else if ((int)serverSequence > Server->m_iSendSequence)
+//			{
+//				m_Interface->OutputConsoleString("World sequence is AHEAD of the client (WTF?)");
+//			}
+//			Unlock();
+//
+//			break;
+//		}
+//	case 0x00000008: //declines requested packets
+//
+//		break;
+//	case 0x00000100: //update CRC
+//		{
+//			Server->m_wTable = Head->m_wTable;
+//			Server->m_wLogicalID = *((WORD *)&Data[0x0]);
+//            Server->m_dwFlags |= SF_CONNECTED;
+//			DWORD input8[8];
+//			DWORD input3[3];
+//			memcpy(input8, &Data[0x12], 8 * sizeof(DWORD));
+//			memcpy(input3, &Data[0x3A], 3 * sizeof(DWORD));
+//			DWORD *seeds = DecryptSeeds(input8, input3);
+//			Server->m_dwRecvCRCSeed = seeds[0];
+//			Server->m_dwSendCRCSeed = seeds[1];
+//			Server->m_pdwRecvCRC	= Server->m_lpdwRecvCRC;
+//			Server->m_pdwSendCRC	= Server->m_lpdwSendCRC;
+//			GenerateCRCs(Server->m_dwSendCRCSeed, Server->m_dwRecvCRCSeed, Server->m_pdwSendCRC, Server->m_pdwRecvCRC);
+//			Server->m_dwFlags |= SF_CRCSEEDS;
+//
+//			m_Interface->OutputConsoleString("WS (%s:%i): New seeds set.  Table: %04X",
+//				inet_ntoa(Server->m_saServer.sin_addr), htons(Server->m_saServer.sin_port), 
+//				Server->m_wTable);
+//
+//			static BYTE acceptSeeds[] = {
+//				0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+//				0x00, 0x00, 0x00, 0x00
+//			};
+//			cPacket *Ack100 = new cPacket();
+//			Ack100->Add(acceptSeeds, sizeof(acceptSeeds));
+//			SendWSPacket(Ack100, Server, true, false);
+//
+//			break;
+//		}
+//	case 0x00000200: //game-related messages
+//
+//		//Loop through the fragments
+//		while ((iPos + sizeof(stFragmentHeader)) < Head->m_wSize)
+//		{
+//			stFragmentHeader *FragHead	= (stFragmentHeader *)&Data[iPos];
+//			BYTE *FragData				= sizeof(stFragmentHeader) + &Data[iPos];
+//			iPos += FragHead->m_wSize;
+//
+//			if (FragHead->m_wCount == 1)
+//			{
+//				cMessage *Msg = new cMessage(FragData, FragHead);
+//				ProcessMessage(Msg, Server);
+//			}
+//			else
+//			{
+//				//Check for existing fragments
+//				if (Server->m_lIncomingMessages.size() > 0)
+//				{
+//					bool bAdded = false;
+//					std::list< cMessage * >::iterator it;
+//					for (it = Server->m_lIncomingMessages.begin(); it != Server->m_lIncomingMessages.end(); it++)
+//					{
+//						if (bAdded)
+//							break;
+//
+//						cMessage *scan = *it;
+//						if ( scan->m_dwSequence == FragHead->m_dwSequence)
+//						{
+//							bAdded = true;
+//							scan->AddChunk(FragData, FragHead->m_wSize - sizeof(stFragmentHeader), FragHead->m_wIndex);
+//							
+//							if ( scan->IsComplete() )
+//							{
+//								ProcessMessage(scan, Server);
+//								Server->m_lIncomingMessages.erase(it);
+//							}
+//							break;
+//						}
+//					}
+//
+//					//No existing group matches, create one
+//					if (!bAdded) //(it == Server->m_lIncomingMessages.end() )
+//					{
+//						cMessage *Msg = new cMessage(FragData, FragHead);
+//						Server->m_lIncomingMessages.push_back(Msg);
+//					}
+//				}
+//				else
+//				{
+//					cMessage *Msg = new cMessage(FragData, FragHead);
+//					Server->m_lIncomingMessages.push_back(Msg);
+//				}
+//			}
+//		}
+//		break;
+//	case 0x00000400: //wtf?
+//		{
+//			static BYTE acceptWTF[] = {
+//				0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+//				0x00, 0x00, 0x00, 0x00
+//			};
+//			cPacket *Ack400 = new cPacket();
+//			Ack400->Add(acceptWTF, sizeof(acceptWTF));
+//			SendWSPacket(Ack400, Server, false, false);
+//			m_Interface->OutputConsoleString("Set output server to %s:%i...", inet_ntoa(Server->m_saServer.sin_addr), ntohs(Server->m_saServer.sin_port));
+//
+//			SetActiveWorldServer(Server->m_saServer);
+//
+//			//no idea if this is what i should do
+//			double serverTime = *((double *)&Data[iPos]);
+//			m_pActiveWorld->m_dwLastSyncRecv = GetTickCount();
+//			m_pActiveWorld->m_flServerTime = serverTime;
+//			m_pActiveWorld->m_dwFlags |= SF_SYNC;
+//			break;
+//		}
+//	case 0x00010000:
+//		{
+//			//data: 0BAD70DD  (bad todd)
+//
+//			m_Interface->OutputConsoleString("10000 from %s:%i..", inet_ntoa(Server->m_saServer.sin_addr), ntohs(Server->m_saServer.sin_port));
+//
+///*			DWORD dataSize = Packet->GetLength() - sizeof(stTransitHeader);
+//			BYTE *data = Packet->GetData() + sizeof(stTransitHeader);
+//			m_Interface->OutputConsoleString("10000: Contents:");
+//			for (DWORD i = 0; i <= ((dataSize - (dataSize % 16)) / 16); i++)
+//			{
+//				char valbuff[128]; memset(valbuff, 0, 128);
+//				char linebuff[128]; memset(linebuff, 0, 128);
+//				char strbuff[128]; memset(strbuff, 0, 128);
+//
+//				strcat(strbuff, "; ");
+//				for (DWORD j = i * 16; (j < ((i+1)*16)) && (j < dataSize); j++)
+//				{
+//					sprintf(valbuff, "%.1s", &data[j]);
+//					strcat(strbuff, valbuff);
+//					sprintf(valbuff, "%02X ", data[j]);
+//					strcat(linebuff, valbuff);
+//				}
+//				strcat(linebuff, strbuff);
+//				m_Interface->OutputConsoleString("%s", linebuff);
+//			}*/
+//
+//			break;
+//		}
+//	case 0x00020000:
+//		{
+//			SOCKADDR_IN tpaddr;
+//			memcpy(&tpaddr, Data, sizeof(tpaddr));
+//			DWORD dwAck = *((DWORD *) (Data+sizeof(tpaddr)));
+//
+//			char outt[50];
+//			strcpy(outt, inet_ntoa(m_pActiveWorld->m_saServer.sin_addr));
+//			m_Interface->OutputConsoleString("WS: Worldserver Redirect: %s:%i->%s:%i...", outt, ntohs(m_pActiveWorld->m_saServer.sin_port), inet_ntoa(tpaddr.sin_addr), ntohs(tpaddr.sin_port));
+//			stServerInfo *newserv = AddWorldServer(tpaddr);
+////			SetActiveWorldServer(tpaddr);
+//
+//			//woo, trying this out my ass...
+//			newserv->m_dwLastSyncRecv = Server->m_dwLastSyncRecv;
+//			newserv->m_flServerTime = Server->m_flServerTime;
+//			if (Server->m_dwFlags & SF_SYNC)
+//				newserv->m_dwFlags |= SF_SYNC;
+//
+//			//Now tell Last WS that we've added it
+//			BYTE acceptServer[] =
+//			{
+//				0x00, 0x00, 0x00, 0x00,
+//				0x00, 0x00, 0x02, 0x00,
+//				0x00, 0x00, 0x00, 0x00, 
+//				0x40, 0x00, 0x00, 0x00,
+//				0x00, 0x00, 0x00, 0x00
+////				,0x5c, 0x00, 0x00, 0x00
+//			};
+//
+//			//WakeServer(newserv);
+//
+//			//Tell the last worldserver we're acking it
+//			cPacket *AcceptServer = new cPacket();
+//			AcceptServer->Add(acceptServer, sizeof(acceptServer));
+//			AcceptServer->Add(dwAck);
+//			SendWSPacket(AcceptServer, Server, false, false);
+//
+//			break;
+//		}
+//	default:
+//		m_Interface->OutputConsoleString("WS: Unknown Packet Type: %08X", dwType);
+//		break;
+//	}
 
 	delete Packet;
 }
@@ -2167,7 +2218,7 @@ void cNetwork::ProcessMessage(cMessage *Msg, stServerInfo *Server)
 				{
 					{
 						WORD dataSize = Msg->GetLength() - 4 - 12;
-						BYTE *data = Msg->ReadGroup(dataSize);
+						const BYTE *data = Msg->ReadGroup(dataSize);
 						m_Interface->OutputConsoleString("Unhandled Packet: F7B0/%04X Contents:", event);
 						for (int i = 0; i <= ((dataSize - (dataSize % 16)) / 16); i++)
 						{
@@ -2276,7 +2327,7 @@ void cNetwork::ProcessMessage(cMessage *Msg, stServerInfo *Server)
 	default:
 		{
 			WORD dataSize = Msg->GetLength() - 4;
-			BYTE *data = Msg->ReadGroup(dataSize);
+			const BYTE *data = Msg->ReadGroup(dataSize);
 			m_Interface->OutputConsoleString("Unhandled Packet: %04X Contents:", dwType);
 			for (int i = 0; i <= ((dataSize - (dataSize % 16)) / 16); i++)
 			{
@@ -2586,7 +2637,7 @@ stServerInfo * cNetwork::AddWorldServer(SOCKADDR_IN NewServer)
 	//fill in tpNewServer struct...
 	memcpy(&tpNewServer.m_saServer, &NewServer, sizeof(SOCKADDR_IN));
 	tpNewServer.m_lSentPackets.clear();
-	tpNewServer.m_iSendSequence = 1;
+    tpNewServer.m_dwSendSequence = 1;
 	tpNewServer.m_wLogicalID = 0;
 	tpNewServer.m_wTable = 0;
 	tpNewServer.m_dwFlags = 0;

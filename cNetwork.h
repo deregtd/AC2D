@@ -6,6 +6,7 @@
 #include "cThread.h"
 #include "cObjectDB.h"
 #include "cCharInfo.h"
+#include "ChecksumXorGenerator.h"
 
 //Speed Consts
 const float sidestep_factor			= 0.5f;
@@ -17,19 +18,60 @@ const float sidestep_anim_speed		= 1.25f;
 const float max_sidestep_anim_rate	= 3.0f;
 
 //Server flags
-#define SF_AWAKE	(1 << 0)
-#define SF_SHOOK	(1 << 1)
+#define SF_CONNECTED (1 << 0)
 #define SF_CRCSEEDS (1 << 2)
-#define SF_SYNC		(1 << 3)
+
+//enum OptionalHeaderFlags
+//{
+//    kDisposable = 0x00000001, // this header may be removed from a retransmission
+//    kExclusive = 0x00000002, // a packet with this header has its own sequence number
+//    kNotConn = 0x00000004, // this header is sent before connect request/reply handshake completes
+//    kTimeSensitive = 0x00000008,
+//    kShouldPiggyBack = 0x00000010, // this header should ride along in a packet with others headers and content
+//    kHighPriority = 0x00000020,
+//    kCountsAsTouch = 0x00000040,
+//    kEncrypted = 0x20000000, // a packet with this header has its checksum encrypted
+//    kSigned = 0x40000000
+//};
+
+enum PacketFlags
+{
+    kRetransmission = 0x00000001,
+    kEncryptedChecksum = 0x00000002,
+    kBlobFragments = 0x00000004,
+    kServerSwitch = 0x00000100, // CServerSwitchStruct (60, kHighPriority|kCountsAsTouch)
+    kUnknown1 = 0x00000200, // CLogonRouteHeader (sockaddr_in) (7, kDisposable|kExclusive|kNotConn)
+    kUnknown2 = 0x00000400, // EmptyHeader (7, kDisposable|kExclusive|kNotConn)
+    kReferral = 0x00000800, // CReferralStruct (40000062, kExclusive|kHighPriority|kCountsAsTouch|kSigned)
+    kRequestRetransmit = 0x00001000, // SeqIDList (33, kDisposable|kExclusive|kShouldPiggyBack|kHighPriority)
+    kRejectRetransmit = 0x00002000, // SeqIDList (33, kDisposable|kExclusive|kShouldPiggyBack|kHighPriority)
+    kAckSequence = 0x00004000, // CPakHeader (unsigned long) (1, kDisposable)
+    kDisconnect = 0x00008000, // EmptyHeader (3, kDisposable|kExclusive)
+    kLogon = 0x00010000, // CLogonHeader (?)
+    kReferred = 0x00020000, // uint64_t (7, kDisposable|kExclusive|kNotConn)
+    kConnectRequest = 0x00040000, // CConnectHeader (?)
+    kConnectResponse = 0x00080000, // uint64_t (20000007, kDisposable|kExclusive|kNotConn|kEncrypted)
+    kNetError1 = 0x00100000, // PackObjHeader<NetError> (7, kDisposable|kExclusive|kNotConn)
+    kNetError2 = 0x00200000, // PackObjHeader<NetError> (2, kExclusive)
+    kCICMDCommand = 0x00400000, // CICMDCommandStruct (7, kDisposable|kExclusive|kNotConn)
+    kTimeSync = 0x01000000, // CTimeSyncHeader (?)
+    kEchoRequest = 0x02000000, // CEchoRequestHeader (?)
+    kEchoResponse = 0x04000000, // CEchoResponseHeader (?)
+    kFlow = 0x08000000  // CFlowStruct (10, kShouldPiggyBack)
+};
 
 struct stServerInfo {
 	SOCKADDR_IN m_saServer;
 	std::list <cPacket *> m_lSentPackets;
 	std::list <cMessage *> m_lIncomingMessages;
 
-	int		m_iSendSequence;
+	DWORD	m_dwSendSequence;
 	WORD	m_wLogicalID;
 	WORD	m_wTable;
+
+    WORD    m_wBasePort;
+
+    QWORD   m_qwCookie;
 
 	//Tracking our received packets
 	DWORD	m_dwRecvSequence;
@@ -48,13 +90,11 @@ struct stServerInfo {
 	//Flags to determine our status/phase
 	DWORD	m_dwFlags;
 
-	//CRC seeds, woohoo!
-	DWORD	m_lpdwSendCRC[3];
-	DWORD	m_lpdwRecvCRC[3];
-	DWORD	*m_pdwSendCRC;
-	DWORD	*m_pdwRecvCRC;
-	DWORD	m_dwSendCRCSeed;
-	DWORD	m_dwRecvCRCSeed;
+    // the rng used to generate xor values for server packets
+    ChecksumXorGenerator serverXorGen;
+
+    // the rng used to generate xor values for client packets
+    ChecksumXorGenerator clientXorGen;
 };
 
 class cNetwork : public cThread {
@@ -111,7 +151,6 @@ public:
 	void Connect();
 	void Disconnect();
 	void CloseConnection(stServerInfo *Server);
-	void WakeServer(stServerInfo *Server);
 
 	stServerInfo * AddWorldServer(SOCKADDR_IN NewServer);
 	void SetActiveWorldServer(SOCKADDR_IN NewServer);
@@ -119,6 +158,8 @@ public:
 	void SendMaterialize();
 
 private:
+    void SendConnectResponse();
+    
 	cInterface *m_Interface;
 	cObjectDB *m_ObjectDB;
 	cCharInfo *m_CharInfo;

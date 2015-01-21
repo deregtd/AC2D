@@ -501,11 +501,11 @@ int cInterface::Draw(RECT rRect, HDC hDC)
 void cInterface::SetInterfaceMode(eInterfaceMode Mode)
 {
 	Lock();
-	if ((Mode > eConnecting) && (m_fConnProgress < 1.0f))
-	{
-		Unlock();
-		return;
-	}
+	//if ((Mode > eConnecting) && (m_fConnProgress < 1.0f))
+	//{
+	//	Unlock();
+	//	return;
+	//}
 
 	m_InterfaceMode = Mode;
 

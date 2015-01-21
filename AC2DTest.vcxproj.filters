@@ -66,9 +66,6 @@
     <ClCompile Include="cPortal.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="crc.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="cThread.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -101,6 +98,9 @@
     </ClCompile>
     <ClCompile Include="WindowLib\CWindowManager.cpp">
       <Filter>WindowLib</Filter>
+    </ClCompile>
+    <ClCompile Include="ChecksumXorGenerator.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -150,9 +150,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="cPortal.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="crc.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="cThread.h">
@@ -265,6 +262,9 @@
     </ClInclude>
     <ClInclude Include="cStaticText.h">
       <Filter>Window Controls</Filter>
+    </ClInclude>
+    <ClInclude Include="ChecksumXorGenerator.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

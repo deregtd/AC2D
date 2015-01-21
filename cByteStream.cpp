@@ -19,7 +19,18 @@ cByteStream::cByteStream(BYTE *Data, DWORD Length)
 
 void cByteStream::SetStream(BYTE *Data, DWORD Length)
 {
-	m_pbDataStart = Data;
+	m_pbDataPtr = m_pbDataStart = Data;
+    m_dwLength = Length;
+}
+
+DWORD cByteStream::GetOffset()
+{
+    return (DWORD) (m_pbDataPtr - m_pbDataStart);
+}
+
+bool cByteStream::AtEOF()
+{
+    return (GetOffset() >= m_dwLength);
 }
 
 void cByteStream::ReadBegin( void )

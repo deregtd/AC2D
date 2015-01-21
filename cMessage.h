@@ -5,7 +5,7 @@
 class cMessage : public cByteStream {
 public:
 	cMessage();
-	cMessage(BYTE *pbData, stFragmentHeader *Header);
+	cMessage(BYTE *pbData, const stFragmentHeader *Header);
 	~cMessage();
 
 	//Used for fragment creation

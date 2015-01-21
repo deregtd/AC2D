@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include "cMessage.h"
 
-cMessage::cMessage(BYTE *pbData, stFragmentHeader *Header)
+cMessage::cMessage(BYTE *pbData, const stFragmentHeader *Header)
 {
 	m_dwSequence	= Header->m_dwSequence;
 	m_dwID			= Header->m_dwID;

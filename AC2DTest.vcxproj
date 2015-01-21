@@ -60,7 +60,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>opengl32.lib;glu32.lib;ws2_32.lib;crcseed2.lib;CRCWheel.lib;zlib\zlibstat.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;glu32.lib;ws2_32.lib;zlib\zlibstat.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutputPath)\$(TargetFileName)</OutputFile>
       <IgnoreAllDefaultLibraries>false</IgnoreAllDefaultLibraries>
       <IgnoreSpecificDefaultLibraries>LIBC;%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
@@ -84,7 +84,7 @@
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>opengl32.lib;glu32.lib;ws2_32.lib;crcseed2.lib;CRCWheel.lib;zlib\zlibstat.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;glu32.lib;ws2_32.lib;zlib\zlibstat.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>C:\turbine\ac\3\ac2dtest.exe</OutputFile>
       <IgnoreSpecificDefaultLibraries>LIBC;%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -120,6 +120,7 @@
     <ClCompile Include="cGraphics.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Disabled</Optimization>
     </ClCompile>
+    <ClCompile Include="ChecksumXorGenerator.cpp" />
     <ClCompile Include="cInterface.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Disabled</Optimization>
     </ClCompile>
@@ -142,9 +143,6 @@
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Disabled</Optimization>
     </ClCompile>
     <ClCompile Include="cPortal.cpp">
-      <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Disabled</Optimization>
-    </ClCompile>
-    <ClCompile Include="crc.cpp">
       <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Disabled</Optimization>
     </ClCompile>
     <ClCompile Include="cThread.cpp">
@@ -180,6 +178,7 @@
     <ClInclude Include="cCharInfo.h" />
     <ClInclude Include="cClient.h" />
     <ClInclude Include="cGraphics.h" />
+    <ClInclude Include="ChecksumXorGenerator.h" />
     <ClInclude Include="cInterface.h" />
     <ClInclude Include="cMessage.h" />
     <ClInclude Include="cModel.h" />
@@ -189,7 +188,6 @@
     <ClInclude Include="cPacket.h" />
     <ClInclude Include="cPoint3D.h" />
     <ClInclude Include="cPortal.h" />
-    <ClInclude Include="crc.h" />
     <ClInclude Include="cThread.h" />
     <ClInclude Include="cTurbineFile.h" />
     <ClInclude Include="cWObject.h" />

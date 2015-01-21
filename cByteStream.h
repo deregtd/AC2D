@@ -9,6 +9,9 @@ public:
 	
 	void	SetStream(BYTE *Data, DWORD Length);
 
+    DWORD   GetOffset();
+    bool    AtEOF();
+
 	//Used for reading the Stream
 	void	ReadBegin();
 	void	ReadAlign();
