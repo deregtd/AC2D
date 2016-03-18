@@ -19,8 +19,8 @@ public:
 private:
 	int HighestPowerOfTwo(DWORD In);
 
-	stdext::hash_map<QWORD, DWORD> m_mGraphicCache;
-	stdext::hash_map<DWORD, POINTf> m_mGraphicEdgeCache;
+	std::unordered_map<QWORD, DWORD> m_mGraphicCache;
+	std::unordered_map<DWORD, POINTf> m_mGraphicEdgeCache;
 
 	cTurbineFile *m_tfPortal, *m_tfPortalHighRes;
 

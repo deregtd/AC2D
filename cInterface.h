@@ -147,7 +147,7 @@ private:
 	float fSpeed;
 
 	std::map<WORD, cLandblock *> m_mLandblocks;
-	stdext::hash_set<WORD> m_mCurrentLandblocks, m_mNeedToLoadBlocks, m_mDownloadingLandblocks;
+	std::unordered_set<WORD> m_mCurrentLandblocks, m_mNeedToLoadBlocks, m_mDownloadingLandblocks;
 
 	LARGE_INTEGER liFreq, liLast;
 

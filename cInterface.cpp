@@ -371,7 +371,7 @@ void cInterface::LoadLandblocks()
 {
 //	OutputString(eYellow, "Loading Landblocks...");
 	
-	for (stdext::hash_set<WORD>::iterator i = m_mNeedToLoadBlocks.begin(); i != m_mNeedToLoadBlocks.end(); i++)
+	for (std::unordered_set<WORD>::iterator i = m_mNeedToLoadBlocks.begin(); i != m_mNeedToLoadBlocks.end(); i++)
 	{
 		cLandblock *pLB = new cLandblock();
 		pLB->Load(*i);
@@ -885,7 +885,7 @@ bool cInterface::OnMouseDown( IWindow & Window, float X, float Y, unsigned long 
 		if (m_mNeedToLoadBlocks.size())
 			LoadLandblocks();
 
-		for (stdext::hash_set<WORD>::iterator i = m_mCurrentLandblocks.begin(); i != m_mCurrentLandblocks.end(); i++)
+		for (std::unordered_set<WORD>::iterator i = m_mCurrentLandblocks.begin(); i != m_mCurrentLandblocks.end(); i++)
 		{
 			if (m_mLandblocks.find(*i) != m_mLandblocks.end())
 			{
@@ -1499,7 +1499,7 @@ bool cInterface::OnRender( IWindow & Window, double TimeSlice )
 		if (m_mNeedToLoadBlocks.size())
 			LoadLandblocks();
 
-		for (stdext::hash_set<WORD>::iterator i = m_mCurrentLandblocks.begin(); i != m_mCurrentLandblocks.end(); i++)
+		for (std::unordered_set<WORD>::iterator i = m_mCurrentLandblocks.begin(); i != m_mCurrentLandblocks.end(); i++)
 		{
 			if (m_mLandblocks.find(*i) != m_mLandblocks.end())
 			{
@@ -1756,7 +1756,7 @@ bool cInterface::OnRender( IWindow & Window, double TimeSlice )
 			if (m_mNeedToLoadBlocks.size())
 				LoadLandblocks();
 
-			for (stdext::hash_set<WORD>::iterator i = m_mCurrentLandblocks.begin(); i != m_mCurrentLandblocks.end(); i++)
+			for (std::unordered_set<WORD>::iterator i = m_mCurrentLandblocks.begin(); i != m_mCurrentLandblocks.end(); i++)
 			{
 				if (m_mLandblocks.find(*i) != m_mLandblocks.end())
 				{

@@ -157,7 +157,7 @@ IWindow *CRootWindow::GetParent() const
 	return NULL;
 }
 
-const std::list< IWindow * const > &CRootWindow::GetChildren() const
+const std::list< IWindow * > &CRootWindow::GetChildren() const
 {
 	return CWindow::GetChildren();
 }

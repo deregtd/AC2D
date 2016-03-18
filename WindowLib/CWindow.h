@@ -69,7 +69,7 @@ class CWindow : public IWindow, private MoveEventAbstractor< CWindow >, private 
 		virtual bool SetParent( IWindow *NewParent );
 		virtual IWindow *GetParent() const;
 
-		virtual const std::list< IWindow * const > &GetChildren() const;
+		virtual const std::list< IWindow * > &GetChildren() const;
 
 	private:
 		virtual bool OnRender( IWindow & Window, double TimeSlice );
@@ -138,22 +138,22 @@ class CWindow : public IWindow, private MoveEventAbstractor< CWindow >, private 
 		bool AnchorBottom;
 		bool AnchorRight;
 
-		std::list< IWindow * const > Children;
+		std::list<IWindow *> Children;
 		IWindow *Parent;
 
 		bool Updating;
 		
 		bool Visible;
 
-		std::list< IMoveEvent * const >			MoveEventHandlers;
-		std::list< IResizeEvent * const >		ResizeEventHandlers;
-		std::list< IMouseEvents * const >		MouseEventHandlers;
-		std::list< IKeyboardEvents * const >	KeyboardEventHandlers;
-		std::list< IRenderEvent * const >		RenderEventHandlers;
-		std::list< IFocusEvents * const >		FocusEventHandlers;
-		std::list< IClipboardEvents * const >	ClipboardEventHandlers;
+		std::list<IMoveEvent *>			MoveEventHandlers;
+		std::list<IResizeEvent *>		ResizeEventHandlers;
+		std::list<IMouseEvents *>		MouseEventHandlers;
+		std::list<IKeyboardEvents *>	KeyboardEventHandlers;
+		std::list<IRenderEvent *>		RenderEventHandlers;
+		std::list<IFocusEvents *>		FocusEventHandlers;
+		std::list<IClipboardEvents *>	ClipboardEventHandlers;
 
-		std::list< IWindowEvents * const >		WindowEventHandlers;
+		std::list<IWindowEvents *>		WindowEventHandlers;
 };
 
 #endif

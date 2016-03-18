@@ -8,10 +8,10 @@ cObjectDB::cObjectDB()
 
 cObjectDB::~cObjectDB()
 {
-	for (stdext::hash_map<DWORD, cWObject *>::iterator i = ObjectList.begin(); i != ObjectList.end(); i++)
+	for (std::unordered_map<DWORD, cWObject *>::iterator i = ObjectList.begin(); i != ObjectList.end(); i++)
 		delete i->second;
 
-	for (stdext::hash_map<DWORD, std::list<DWORD> *>::iterator i = m_mPackContents.begin(); i != m_mPackContents.end(); i++)
+	for (std::unordered_map<DWORD, std::list<DWORD> *>::iterator i = m_mPackContents.begin(); i != m_mPackContents.end(); i++)
 		delete i->second;
 }
 
@@ -65,7 +65,7 @@ std::list<cWObject *> * cObjectDB::GetObjectsWithin(cPoint3D Position, float fDi
 
 	std::list<cWObject *> *ObjList = new std::list<cWObject *>;
 
-	for (stdext::hash_map<DWORD, cWObject *>::iterator i = ObjectList.begin(); i != ObjectList.end(); i++)
+	for (std::unordered_map<DWORD, cWObject *>::iterator i = ObjectList.begin(); i != ObjectList.end(); i++)
 	{
 		i->second->Lock();
 		
@@ -89,7 +89,7 @@ std::list<cWObject *> * cObjectDB::GetObjectsWithin(cPoint3D Position, float fDi
 void cObjectDB::UpdateObjects(float fTimeDiff)
 {
 	Lock();
-	for (stdext::hash_map<DWORD, cWObject *>::iterator i = ObjectList.begin(); i != ObjectList.end(); i++)
+	for (std::unordered_map<DWORD, cWObject *>::iterator i = ObjectList.begin(); i != ObjectList.end(); i++)
 	{
 		(*i).second->UpdatePosition(fTimeDiff);
 	}

@@ -40,7 +40,7 @@ CWindow::~CWindow()
 
 bool CWindow::AddMoveEventHandler( IMoveEvent &MoveEvents )
 {
-	for( std::list< IMoveEvent * const >::iterator I = MoveEventHandlers.begin(); I != MoveEventHandlers.end(); I++ )
+	for( std::list< IMoveEvent * >::iterator I = MoveEventHandlers.begin(); I != MoveEventHandlers.end(); I++ )
 	{
 		if( *I == &MoveEvents )
 		{
@@ -55,7 +55,7 @@ bool CWindow::AddMoveEventHandler( IMoveEvent &MoveEvents )
 
 bool CWindow::AddResizeEventHandler( IResizeEvent &ResizeEvent )
 {
-	for( std::list< IResizeEvent * const >::iterator I = ResizeEventHandlers.begin(); I != ResizeEventHandlers.end(); I++ )
+	for( std::list< IResizeEvent * >::iterator I = ResizeEventHandlers.begin(); I != ResizeEventHandlers.end(); I++ )
 	{
 		if( *I == &ResizeEvent )
 		{
@@ -70,7 +70,7 @@ bool CWindow::AddResizeEventHandler( IResizeEvent &ResizeEvent )
 
 bool CWindow::AddMouseEventHandler( IMouseEvents &MouseEvents )
 {
-	for( std::list< IMouseEvents * const >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
+	for( std::list< IMouseEvents * >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
 	{
 		if( *I == &MouseEvents )
 		{
@@ -85,7 +85,7 @@ bool CWindow::AddMouseEventHandler( IMouseEvents &MouseEvents )
 
 bool CWindow::AddKeyboardEventHandler( IKeyboardEvents &KeyboardEvents )
 {
-	for( std::list< IKeyboardEvents * const >::iterator I = KeyboardEventHandlers.begin(); I != KeyboardEventHandlers.end(); I++ )
+	for( std::list< IKeyboardEvents * >::iterator I = KeyboardEventHandlers.begin(); I != KeyboardEventHandlers.end(); I++ )
 	{
 		if( *I == &KeyboardEvents )
 		{
@@ -100,7 +100,7 @@ bool CWindow::AddKeyboardEventHandler( IKeyboardEvents &KeyboardEvents )
 
 bool CWindow::AddRenderEventHandler( IRenderEvent &RenderEvent )
 {
-	for( std::list< IRenderEvent * const >::iterator I = RenderEventHandlers.begin(); I != RenderEventHandlers.end(); I++ )
+	for( std::list< IRenderEvent * >::iterator I = RenderEventHandlers.begin(); I != RenderEventHandlers.end(); I++ )
 	{
 		if( *I == &RenderEvent )
 		{
@@ -115,7 +115,7 @@ bool CWindow::AddRenderEventHandler( IRenderEvent &RenderEvent )
 
 bool CWindow::AddFocusEventHandler( IFocusEvents &FocusEvents )
 {
-	for( std::list< IFocusEvents * const >::iterator I = FocusEventHandlers.begin(); I != FocusEventHandlers.end(); I++ )
+	for( std::list< IFocusEvents * >::iterator I = FocusEventHandlers.begin(); I != FocusEventHandlers.end(); I++ )
 	{
 		if( *I == &FocusEvents )
 		{
@@ -130,7 +130,7 @@ bool CWindow::AddFocusEventHandler( IFocusEvents &FocusEvents )
 
 bool CWindow::AddClipboardEventHandler( IClipboardEvents &ClipboardEvents )
 {
-	for( std::list< IClipboardEvents * const >::iterator I = ClipboardEventHandlers.begin(); I != ClipboardEventHandlers.end(); I++ )
+	for( std::list< IClipboardEvents * >::iterator I = ClipboardEventHandlers.begin(); I != ClipboardEventHandlers.end(); I++ )
 	{
 		if( *I == &ClipboardEvents )
 		{
@@ -145,7 +145,7 @@ bool CWindow::AddClipboardEventHandler( IClipboardEvents &ClipboardEvents )
 
 bool CWindow::AddWindowEventHandler( IWindowEvents &WindowEvents )
 {
-	for( std::list< IWindowEvents * const >::iterator I = WindowEventHandlers.begin(); I != WindowEventHandlers.end(); I++ )
+	for( std::list< IWindowEvents * >::iterator I = WindowEventHandlers.begin(); I != WindowEventHandlers.end(); I++ )
 	{
 		if( *I == &WindowEvents )
 		{
@@ -166,7 +166,7 @@ bool CWindow::SetWidth( float NewWidth )
 	bool AnchoredLeft = false;
 	bool AnchoredRight = false;
 
-	std::list< IWindow *const >::iterator I;
+	std::list< IWindow * >::iterator I;
 
 	if( NewWidth < 0 )
 	{
@@ -222,7 +222,7 @@ bool CWindow::SetHeight( float NewHeight )
 	bool AnchoredTop = false;
 	bool AnchoredBottom = false;
 
-	std::list< IWindow *const >::iterator I;
+	std::list< IWindow * >::iterator I;
 
 	if( NewHeight < 0 )
 	{
@@ -282,7 +282,7 @@ bool CWindow::SetSize( float NewWidth, float NewHeight )
 	bool AnchoredRight = false;
 	bool AnchoredBottom = false;
 	
-	std::list< IWindow *const >::iterator I;
+	std::list< IWindow * >::iterator I;
 	
 	if( NewWidth < 0 || NewHeight < 0 )
 	{
@@ -729,7 +729,7 @@ IWindow *CWindow::GetParent() const
 	return Parent;
 }
 
-const std::list< IWindow * const > &CWindow::GetChildren() const
+const std::list< IWindow * > &CWindow::GetChildren() const
 {
 	return Children;
 }
@@ -839,7 +839,7 @@ bool CWindow::FireRender( double TimeSlice )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IRenderEvent * const >::iterator I = RenderEventHandlers.begin(); I != RenderEventHandlers.end(); I++ )
+	for( std::list< IRenderEvent * >::iterator I = RenderEventHandlers.begin(); I != RenderEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnRender( *this, TimeSlice );
 
@@ -857,7 +857,7 @@ bool CWindow::FireResize( float NewWidth, float NewHeight )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IResizeEvent * const >::iterator I = ResizeEventHandlers.begin(); I != ResizeEventHandlers.end(); I++ )
+	for( std::list< IResizeEvent * >::iterator I = ResizeEventHandlers.begin(); I != ResizeEventHandlers.end(); I++ )
 	{
 		IResizeEvent * const foo = *I;
 		Temp = (*I)->OnResize( *this, NewWidth, NewHeight );
@@ -876,7 +876,7 @@ bool CWindow::FireResized()
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IResizeEvent * const >::iterator I = ResizeEventHandlers.begin(); I != ResizeEventHandlers.end(); I++ )
+	for( std::list< IResizeEvent * >::iterator I = ResizeEventHandlers.begin(); I != ResizeEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnResized( *this );
 
@@ -894,7 +894,7 @@ bool CWindow::FireMove( float NewLeft, float NewTop )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IMoveEvent * const >::iterator I = MoveEventHandlers.begin(); I != MoveEventHandlers.end(); I++ )
+	for( std::list< IMoveEvent * >::iterator I = MoveEventHandlers.begin(); I != MoveEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnMove( *this, NewLeft, NewTop );
 
@@ -912,7 +912,7 @@ bool CWindow::FireClick( float X, float Y, unsigned long Button )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IMouseEvents * const >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
+	for( std::list< IMouseEvents * >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnClick( *this, X, Y, Button );
 
@@ -930,7 +930,7 @@ bool CWindow::FireDoubleClick( float X, float Y, unsigned long Button )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IMouseEvents * const >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
+	for( std::list< IMouseEvents * >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnDoubleClick( *this, X, Y, Button );
 
@@ -948,7 +948,7 @@ bool CWindow::FireMouseWheel( float X, float Y, unsigned long Button )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IMouseEvents * const >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
+	for( std::list< IMouseEvents * >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnMouseWheel( *this, X, Y, Button );
 
@@ -966,7 +966,7 @@ bool CWindow::FireMouseDown( float X, float Y, unsigned long Button )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IMouseEvents * const >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
+	for( std::list< IMouseEvents * >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnMouseDown( *this, X, Y, Button );
 
@@ -984,7 +984,7 @@ bool CWindow::FireMouseUp( float X, float Y, unsigned long Button )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IMouseEvents * const >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
+	for( std::list< IMouseEvents * >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnMouseUp( *this, X, Y, Button );
 
@@ -1002,7 +1002,7 @@ bool CWindow::FireMouseMove( float X, float Y, unsigned long Button )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IMouseEvents * const >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
+	for( std::list< IMouseEvents * >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnMouseMove( *this, X, Y, Button );
 
@@ -1020,7 +1020,7 @@ bool CWindow::FireMouseEnter( float X, float Y, unsigned long Button )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IMouseEvents * const >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
+	for( std::list< IMouseEvents * >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnMouseEnter( *this, X, Y, Button );
 
@@ -1038,7 +1038,7 @@ bool CWindow::FireMouseExit( float X, float Y, unsigned long Button )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IMouseEvents * const >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
+	for( std::list< IMouseEvents * >::iterator I = MouseEventHandlers.begin(); I != MouseEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnMouseExit( *this, X, Y, Button );
 
@@ -1056,7 +1056,7 @@ bool CWindow::FireKeyPress( unsigned long KeyCode )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IKeyboardEvents * const >::iterator I = KeyboardEventHandlers.begin(); I != KeyboardEventHandlers.end(); I++ )
+	for( std::list< IKeyboardEvents * >::iterator I = KeyboardEventHandlers.begin(); I != KeyboardEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnKeyPress( *this, KeyCode );
 
@@ -1073,7 +1073,7 @@ bool CWindow::FireKeyDown( unsigned long KeyCode )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IKeyboardEvents * const >::iterator I = KeyboardEventHandlers.begin(); I != KeyboardEventHandlers.end(); I++ )
+	for( std::list< IKeyboardEvents * >::iterator I = KeyboardEventHandlers.begin(); I != KeyboardEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnKeyDown( *this, KeyCode );
 
@@ -1090,7 +1090,7 @@ bool CWindow::FireKeyUp( unsigned long KeyCode )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IKeyboardEvents * const >::iterator I = KeyboardEventHandlers.begin(); I != KeyboardEventHandlers.end(); I++ )
+	for( std::list< IKeyboardEvents * >::iterator I = KeyboardEventHandlers.begin(); I != KeyboardEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnKeyUp( *this, KeyCode );
 
@@ -1108,7 +1108,7 @@ bool CWindow::FireGotFocus( IWindow *FromWindow )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IFocusEvents * const >::iterator I = FocusEventHandlers.begin(); I != FocusEventHandlers.end(); I++ )
+	for( std::list< IFocusEvents * >::iterator I = FocusEventHandlers.begin(); I != FocusEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnGotFocus( *this, FromWindow );
 
@@ -1126,7 +1126,7 @@ bool CWindow::FireLostFocus( IWindow *ToWindow )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IFocusEvents * const >::iterator I = FocusEventHandlers.begin(); I != FocusEventHandlers.end(); I++ )
+	for( std::list< IFocusEvents * >::iterator I = FocusEventHandlers.begin(); I != FocusEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnLostFocus( *this, ToWindow );
 
@@ -1144,7 +1144,7 @@ bool CWindow::FireCut( IClipboard &Clipboard )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IClipboardEvents * const >::iterator I = ClipboardEventHandlers.begin(); I != ClipboardEventHandlers.end(); I++ )
+	for( std::list< IClipboardEvents * >::iterator I = ClipboardEventHandlers.begin(); I != ClipboardEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnCut( *this, Clipboard );
 
@@ -1162,7 +1162,7 @@ bool CWindow::FireCopy( IClipboard &Clipboard )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IClipboardEvents * const >::iterator I = ClipboardEventHandlers.begin(); I != ClipboardEventHandlers.end(); I++ )
+	for( std::list< IClipboardEvents * >::iterator I = ClipboardEventHandlers.begin(); I != ClipboardEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnCopy( *this, Clipboard );
 
@@ -1180,7 +1180,7 @@ bool CWindow::FirePaste( const IClipboard &Clipboard )
 	bool Temp = false;
 	bool RetVal = false;
 
-	for( std::list< IClipboardEvents * const >::iterator I = ClipboardEventHandlers.begin(); I != ClipboardEventHandlers.end(); I++ )
+	for( std::list< IClipboardEvents * >::iterator I = ClipboardEventHandlers.begin(); I != ClipboardEventHandlers.end(); I++ )
 	{
 		Temp = (*I)->OnPaste( *this, Clipboard );
 

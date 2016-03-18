@@ -19,8 +19,8 @@ public:
 	void ParsePackContents(cMessage *Msg);
 
 private:
-	stdext::hash_map<DWORD, cWObject *> ObjectList;
+	std::unordered_map<DWORD, cWObject *> ObjectList;
 
-	stdext::hash_map<DWORD, std::list<DWORD> *> m_mPackContents;
+	std::unordered_map<DWORD, std::list<DWORD> *> m_mPackContents;
 
 };

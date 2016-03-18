@@ -72,7 +72,7 @@ class IWindow /* : public IMoveEvent, public IResizeEvent, public IMouseEvents, 
 		virtual bool SetParent( IWindow *NewParent ) = 0;
 		virtual IWindow *GetParent() const = 0;
 
-		virtual const std::list< IWindow * const > &GetChildren() const = 0;
+		virtual const std::list< IWindow * > &GetChildren() const = 0;
 
 		virtual bool FireRender( double TimeSlice ) = 0;
 

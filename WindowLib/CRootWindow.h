@@ -48,7 +48,7 @@ class CRootWindow : public CWindow
 		virtual bool SetParent( IWindow *NewParent );
 		virtual IWindow *GetParent() const;
 
-		virtual const std::list< IWindow * const > &GetChildren() const;
+		virtual const std::list< IWindow * > &GetChildren() const;
 
 		virtual bool PrivateSetWidth( float NewWidth );
 		virtual bool PrivateSetHeight( float NewHeight );

@@ -85,7 +85,7 @@ protected:
 	void CloseFile();
 
 private:
-	void FindFiles( DWORD dirPos, stdext::hash_set<DWORD> *LoadSet );
+	void FindFiles( DWORD dirPos, std::unordered_set<DWORD> *LoadSet );
 	void LoadSection( DWORD offset, DWORD length, void * PlaceIn );
 	void CalcPoolSize();
 

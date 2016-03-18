@@ -386,7 +386,7 @@ private:
 
 	DWORD m_dwPatron, m_dwMonarch;
 
-	stdext::hash_set<DWORD> m_lSpellbook;
+	std::unordered_set<DWORD> m_lSpellbook;
 
 	std::list<DWORD> m_lSpellBar[7];
 	std::list<std::pair<DWORD,DWORD> > m_lCompBuyer;

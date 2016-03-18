@@ -85,7 +85,7 @@ void cTurbineFile::LoadFile( std::string Filename )
 	if (!bPreloaded)
 	{
 		//Load it up!
-		stdext::hash_set<DWORD> LoadSet;
+		std::unordered_set<DWORD> LoadSet;
 		FindFiles( m_FileHeader.dwRootOffset, &LoadSet );
 
 		//Try to store preload for next time...
@@ -153,7 +153,7 @@ void cTurbineFile::LoadSection(DWORD offset, DWORD length, void * PlaceIn)
 	}
 }
 
-void cTurbineFile::FindFiles( DWORD dwDirPos, stdext::hash_set<DWORD> * sLoadSet )
+void cTurbineFile::FindFiles( DWORD dwDirPos, std::unordered_set<DWORD> * sLoadSet )
 {
 //	if (m_mLoadMap.find(dwDirPos) != m_mLoadMap.end())
 	if (sLoadSet->find(dwDirPos) != sLoadSet->end())

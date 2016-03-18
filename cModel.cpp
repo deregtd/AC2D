@@ -271,7 +271,7 @@ bool cModel::ParsePreModel(cACPreModel * pModel)
 	//loading stage 2 - Convert trifan lists into triangle lists by texture unit
 
 	//Loop through each trifan, and make an index of all the different textures that this model uses
-	stdext::hash_set<DWORD> mTex;
+	std::unordered_set<DWORD> mTex;
 	std::vector<stTexInfo> vTex;
 	
 	for (int i=0; i<pModel->iNumTriFans; i++)
@@ -353,7 +353,7 @@ bool cModel::ParsePreModel(cACPreModel * pModel)
 
 	//Now, loop through each unique texture index and figure out which triangles use this texture
 	int icnt = 0;
-	for (stdext::hash_set<DWORD>::iterator texid = mTex.begin(); texid != mTex.end(); texid++, icnt++)
+	for (std::unordered_set<DWORD>::iterator texid = mTex.begin(); texid != mTex.end(); texid++, icnt++)
 	{
 		stTriSet *rgT = new stTriSet();
 		rgT->dwGLTex = *texid;

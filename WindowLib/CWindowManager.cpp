@@ -65,7 +65,7 @@ IWindow *CWindowManager::SetFocusedWindow( IWindow * Window )
 	
 	unsigned long MyFocusID = 0;
 	
-	std::list< IWindow *const >::iterator I;
+	std::list< IWindow * >::iterator I;
 	
 	//IF THIS IS THE FIRST CALL TO SETFOCUSEDWINDOW IN A NESTED SET OF CALLS
 	//THIS CALL MUST ALSO RESET THE FOCUSCHANGECOUNT TO 0
@@ -168,7 +168,7 @@ IWindow *CWindowManager::GetFocusedWindow()
 
 IWindow *CWindowManager::GetWindowFromXY( float X, float Y )
 {
-	std::list< IWindow * const >::const_reverse_iterator I;
+	std::list< IWindow * >::const_reverse_iterator I;
 	
 	IWindow *Window = NULL;
 	
@@ -189,7 +189,7 @@ IWindow *CWindowManager::GetWindowFromXY( float X, float Y )
 
 void CWindowManager::OnRender( double TimeSlice )
 {
-	std::list< IWindow * const >::const_iterator I;
+	std::list< IWindow * >::const_iterator I;
 
 	for( I = Root.GetChildren().begin(); I != Root.GetChildren().end(); I++ )
 	{
@@ -348,8 +348,8 @@ void CWindowManager::OnMouseExit( float X, float Y, unsigned long Button )
 
 void CWindowManager::OnKeyPress( unsigned long KeyCode )
 {
-	std::list< IWindow * const >::const_iterator I;
-	std::list< IWindow * const >::const_iterator NextI;
+	std::list< IWindow * >::const_iterator I;
+	std::list< IWindow * >::const_iterator NextI;
 	
 	if( FocusedWindow == NULL )
 	{
@@ -409,7 +409,7 @@ void CWindowManager::OnKeyUp( unsigned long KeyCode )
 
 void CWindowManager::RenderWindow( IWindow * Window, double TimeSlice )
 {
-	std::list< IWindow *const >::const_iterator I;
+	std::list< IWindow * >::const_iterator I;
 	
 	Window->FireRender( TimeSlice );
 	
@@ -428,7 +428,7 @@ IWindow *CWindowManager::GetChildFromXY( IWindow * Window, float X, float Y )
 {
 	IWindow *TempWindow = NULL;
 
-	std::list< IWindow *const >::const_reverse_iterator I;
+	std::list< IWindow * >::const_reverse_iterator I;
 	
 	for( I = Window->GetChildren().rbegin(); I != Window->GetChildren().rend(); I++ )
 	{
