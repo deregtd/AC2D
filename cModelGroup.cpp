@@ -94,7 +94,7 @@ void cModelGroup::PlayAnimation(DWORD dwAnim, DWORD dwStartFrame, DWORD dwEndFra
 //					Whine ("Unknown ANIM_EXTRA","(FILE:0x%08X):(OFS:0x%04X):(EXTRA:0x%08X)",
 //						(anm),(hex-start)*4,*hex);
 					MessageBeep(-1);
-					__asm int 3;
+                    return;
 				}
 				count--;
 			}
@@ -185,7 +185,6 @@ bool cModelGroup::ReadDungeon(DWORD dwDungeon, WORD wDungeonPart, std::vector<WO
 	bool bRet = mModel->ReadDungeonPart(dwDungeon, wDungeonPart, v_Textures);
 	if (!bRet)
 	{
-		__asm int 3;
 		delete mModel;
 		return false;
 	}
@@ -209,7 +208,6 @@ bool cModelGroup::ReadModel(DWORD dwModel, std::vector<stPaletteSwap> *vPaletteS
 		bool bRet = mModel->ReadModel(dwModel);
 		if (!bRet)
 		{
-			__asm int 3;
 			delete mModel;
 			return false;
 		}
@@ -222,7 +220,6 @@ bool cModelGroup::ReadModel(DWORD dwModel, std::vector<stPaletteSwap> *vPaletteS
 		cPortalFile *pf = m_Portal->OpenEntry(dwModel);
 		if (!pf)
 		{
-			__asm int 3;
 			return false;
 		}
 
@@ -256,7 +253,6 @@ bool cModelGroup::ReadModel(DWORD dwModel, std::vector<stPaletteSwap> *vPaletteS
 			if (!bRet)
 			{
 				delete mModel;
-				__asm int 3;
 				return false;
 			}
 

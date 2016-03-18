@@ -19,7 +19,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
                      LPTSTR    lpCmdLine,
                      int       nCmdShow)
 {
-	//MessageBox(NULL, lpCmdLine, NULL, MB_OK);
+	MessageBox(NULL, lpCmdLine, NULL, MB_OK);
 
 	hInst = hInstance;
 

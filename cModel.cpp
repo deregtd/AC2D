@@ -58,7 +58,6 @@ bool cModel::ReadDungeonPart(DWORD dwDungeon, WORD wDungeonPart, std::vector<WOR
 	cPortalFile *pf = m_Portal->OpenEntry(dwDungeon);
 	if (!pf)
 	{
-		__asm int 3;
 		return false;
 	}
 
@@ -94,7 +93,6 @@ bool cModel::ReadDungeonPart(DWORD dwDungeon, WORD wDungeonPart, std::vector<WOR
 			WORD wVertNum = pBS.ReadWORD();
 			if (h != wVertNum)
 			{
-				__asm int 3;
 				return false;
 			}
 			NewModel.m_Vertices[h].Unpack(&pBS);
@@ -106,7 +104,6 @@ bool cModel::ReadDungeonPart(DWORD dwDungeon, WORD wDungeonPart, std::vector<WOR
 			WORD wPolyNum = pBS.ReadWORD();
 			if (h != wPolyNum)
 			{
-				__asm int 3;
 				return false;
 			}
 
@@ -130,7 +127,6 @@ bool cModel::ReadDungeonPart(DWORD dwDungeon, WORD wDungeonPart, std::vector<WOR
 			WORD wPolyNum = pBS.ReadWORD();
 			if (h != wPolyNum)
 			{
-				__asm int 3;
 				return false;
 			}
 			cACTriFan tpFan;
@@ -172,7 +168,6 @@ bool cModel::ReadModel(DWORD dwModel, int iModelNum, std::vector<stPaletteSwap> 
 	cPortalFile *pf = m_Portal->OpenEntry(dwModel);
 	if (!pf)
 	{
-		__asm int 3;
 		return false;
 	}
 
@@ -209,7 +204,6 @@ bool cModel::ReadModel(DWORD dwModel, int iModelNum, std::vector<stPaletteSwap> 
 		WORD vertNum = pBS.ReadWORD();
 		if (i != vertNum)
 		{
-			__asm int 3;
 			return false;
 		}
 		NewModel.m_Vertices[i].Unpack(&pBS);
@@ -226,7 +220,6 @@ bool cModel::ReadModel(DWORD dwModel, int iModelNum, std::vector<stPaletteSwap> 
 			WORD polyNum = pBS.ReadWORD();
 			if (i != polyNum)
 			{
-				__asm int 3;
 				return false;
 			}
 			tfCollision[i].Unpack(&pBS);
@@ -255,7 +248,6 @@ bool cModel::ReadModel(DWORD dwModel, int iModelNum, std::vector<stPaletteSwap> 
 			WORD polyNum = pBS.ReadWORD();
 			if (i != polyNum)
 			{
-				__asm int 3;
 				return false;
 			}
 			NewModel.m_TriFans[i].Unpack(&pBS);
@@ -278,7 +270,6 @@ bool cModel::ParsePreModel(cACPreModel * pModel)
 	{
 		if (pModel->m_TriFans[i].wTexNum >= pModel->m_Textures.size())
 		{
-			__asm int 3;
 			return false;
 		}
 
@@ -287,7 +278,6 @@ bool cModel::ParsePreModel(cACPreModel * pModel)
 		cPortalFile *pfTexInfo = m_Portal->OpenEntry(dwTexture);
 		if (!pfTexInfo)
 		{
-			__asm int 3;
 			return false;
 		}
 

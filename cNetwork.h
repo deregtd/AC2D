@@ -91,10 +91,10 @@ struct stServerInfo {
 	DWORD	m_dwFlags;
 
     // the rng used to generate xor values for server packets
-    ChecksumXorGenerator serverXorGen;
+    ChecksumXorGenerator *serverXorGen;
 
     // the rng used to generate xor values for client packets
-    ChecksumXorGenerator clientXorGen;
+    ChecksumXorGenerator *clientXorGen;
 };
 
 class cNetwork : public cThread {

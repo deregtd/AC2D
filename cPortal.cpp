@@ -231,8 +231,8 @@ DWORD cPortal::FindGraphic(DWORD ID, std::vector<stPaletteSwap> *vPaletteSwaps, 
 		else if ((format == 0x17) || (format == 0x1A))	//16-bit grayscale?
 			glTexImage2D(GL_TEXTURE_2D, 0, 1, sizeX2,sizeY2, 0, GL_LUMINANCE, GL_UNSIGNED_SHORT, pfUI->data+24);
 		else
-			__asm int 3;
-	}
+            return NULL;
+    }
 	else
 	{
 		//Padding will be required, unfortunately...
@@ -276,10 +276,8 @@ DWORD cPortal::FindGraphic(DWORD ID, std::vector<stPaletteSwap> *vPaletteSwaps, 
 							break;
 						default:
 							{
-								int a = 4;
-								__asm int 3;
-							}
-							break;
+                                return NULL;
+                            }
 					}
 				}
 				else

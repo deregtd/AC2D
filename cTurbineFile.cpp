@@ -22,36 +22,33 @@ void cTurbineFile::LoadFile( std::string Filename )
 {
 	m_szFilename = Filename;
 
-	HANDLE hFucked;
-	hFucked = CreateFile( (m_szACPath + Filename).c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, NULL );
-	if( hFucked == INVALID_HANDLE_VALUE )
+    m_hFile = CreateFile( (m_szACPath + Filename).c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, NULL );
+	if(m_hFile == INVALID_HANDLE_VALUE )
 	{
-		Filename = m_szACPath + Filename;
+        MessageBox( NULL, "CreateFile failed", "AC2D", MB_OK | MB_ICONEXCLAMATION );
 
-		m_hFile = CreateFile( Filename.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_RANDOM_ACCESS, NULL );
-		if( hFucked == INVALID_HANDLE_VALUE )
-            MessageBox( NULL, "File not found", "AC2D", MB_OK | MB_ICONEXCLAMATION );
-
-		//throw std::exception();
+        return;
 	}
 
-	m_hMapping = CreateFileMapping( hFucked, NULL, PAGE_READWRITE | SEC_COMMIT, 0, 0, NULL );
+	m_hMapping = CreateFileMapping(m_hFile, NULL, PAGE_READWRITE | SEC_COMMIT, 0, 0, NULL );
 	if( m_hMapping == NULL )
 	{
-		MessageBox( NULL, "File not found", "AC2D", MB_OK | MB_ICONEXCLAMATION );
+		MessageBox( NULL, "CreateFileMapping failed", "AC2D", MB_OK | MB_ICONEXCLAMATION );
 
-		CloseHandle( hFucked );
-		//throw std::exception( "Could not create file mapping." );
+		CloseHandle(m_hFile);
+        return;
+        //throw std::exception( "Could not create file mapping." );
 	}
 
 	m_pData = (BYTE *) MapViewOfFileEx( m_hMapping, FILE_MAP_ALL_ACCESS, 0, 0, 0, NULL );
 	if( m_pData == NULL )
 	{
-		MessageBox( NULL, "File not found", "AC2D", MB_OK | MB_ICONEXCLAMATION );
+		MessageBox( NULL, "MapViewOfFileEx failed", "AC2D", MB_OK | MB_ICONEXCLAMATION );
 
-		CloseHandle( m_hMapping );
-		CloseHandle( hFucked );
-		//throw std::exception( "Could not create file mapping." );
+        CloseHandle(m_hMapping);
+        CloseHandle(m_hFile);
+        return;
+        //throw std::exception( "Could not create file mapping." );
 	}
 
 	memcpy(&m_FileHeader, m_pData + FILEHEADERLOC, sizeof(TODDatFileHeader));
@@ -59,7 +56,7 @@ void cTurbineFile::LoadFile( std::string Filename )
 	bool bPreloaded = false;
 	char prefile[128];
 	FILETIME ftCreate, ftAccess, ftWrite;
-	GetFileTime(hFucked, &ftCreate, &ftAccess, &ftWrite);
+	GetFileTime(m_hFile, &ftCreate, &ftAccess, &ftWrite);
 	sprintf(prefile, "%s.pre", Filename.c_str());
 	FILE *preload = fopen(prefile, "rb");
 	if (preload)

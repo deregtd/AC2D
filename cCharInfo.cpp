@@ -713,7 +713,6 @@ void cCharInfo::ParseAllegiance(cMessage *Msg)
 	if ( vRawAllegs.size() == 0 )
 	{
 		//this outta never happen
-		__asm int 3;
 		return;
 	}
 

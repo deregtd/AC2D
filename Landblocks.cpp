@@ -199,8 +199,10 @@ void cLandblock::Load(WORD wBlock)
 			tp3d.CalcFromLocation(&tpld);
 
 			cModelGroup *DModel = new cModelGroup();
-			if (!DModel->ReadDungeon(DungeonRef, DungeonPart, &vTexes))
-				__asm int 3;
+            if (!DModel->ReadDungeon(DungeonRef, DungeonPart, &vTexes))
+            {
+                return;
+            }
 			DModel->SetScale(1/240.0f);
 			DModel->SetTranslation(tp3d);
 			DModel->SetRotation(tpld.wHeading, tpld.aHeading, tpld.bHeading, tpld.cHeading);
@@ -247,9 +249,9 @@ void cLandblock::Load(WORD wBlock)
 					cModelGroup *Model = new cModelGroup();
 					if (!Model->ReadModel(dwModelID))
 					{
-						__asm int 3;
-			//			OutputString(eRed, "Failed model load: %08X", m_lbFFFE.Objects[j].dwID);
-		//				OutputConsoleString("Failed model load: %08X", dwModelID);
+                        return;
+//			OutputString(eRed, "Failed model load: %08X", m_lbFFFE.Objects[j].dwID);
+//				OutputConsoleString("Failed model load: %08X", dwModelID);
 					}
 					Model->SetScale(1/240.0f);
 					Model->SetTranslation(tp3d);
@@ -283,8 +285,8 @@ void cLandblock::Load(WORD wBlock)
 			cModelGroup *Model = new cModelGroup();
 			if (!Model->ReadModel(dwModelID))
 			{
-				__asm int 3;
-	//			OutputString(eRed, "Failed model load: %08X", m_lbFFFE.Objects[j].dwID);
+                return;
+                //			OutputString(eRed, "Failed model load: %08X", m_lbFFFE.Objects[j].dwID);
 //				OutputConsoleString("Failed model load: %08X", dwModelID);
 			}
 			Model->SetScale(1/240.0f);
@@ -313,8 +315,8 @@ void cLandblock::Load(WORD wBlock)
 			cModelGroup *Model = new cModelGroup();
 			if (!Model->ReadModel(dwModelID))
 			{
-				__asm int 3;
-	//			OutputString(eRed, "Failed model load: %08X", dwModelID);
+                return;
+                //			OutputString(eRed, "Failed model load: %08X", dwModelID);
 //				OutputConsoleString("Failed model load: %08X", dwModelID);
 			}
 			Model->SetScale(1/240.0f);

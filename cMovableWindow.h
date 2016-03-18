@@ -400,7 +400,7 @@ private:
 			{
 				if (m_bSetCursor)
 				{
-					SetClassLongPtr(GetForegroundWindow(), GCL_HCURSOR, (LONG_PTR) LoadCursor(NULL, IDC_ARROW));
+					SetClassLongPtr(GetForegroundWindow(), GCLP_HCURSOR, (LONG_PTR) LoadCursor(NULL, IDC_ARROW));
 					m_bSetCursor = false;
 				}
 			}
@@ -410,7 +410,7 @@ private:
 	}
 	bool MouseEventsAbstractor< cMovableWindow >::OnMouseExit( IWindow & Window, float X, float Y, unsigned long Button )
 	{
-		SetClassLongPtr(GetForegroundWindow(), GCL_HCURSOR, (LONG_PTR) LoadCursor(NULL, IDC_ARROW));
+		SetClassLongPtr(GetForegroundWindow(), GCLP_HCURSOR, (LONG_PTR) LoadCursor(NULL, IDC_ARROW));
 		m_bSetCursor = false;
 
 		return true;

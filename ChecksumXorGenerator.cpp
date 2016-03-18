@@ -23,8 +23,10 @@
 
 static const DWORD kMaxCacheSize = 100;
 
-ChecksumXorGenerator::ChecksumXorGenerator() : cacheBegin_(0)
-{}
+ChecksumXorGenerator::ChecksumXorGenerator()
+{
+    cacheBegin_ = 0;
+}
 
 void ChecksumXorGenerator::init(DWORD seed)
 {

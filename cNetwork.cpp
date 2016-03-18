@@ -307,10 +307,10 @@ static DWORD checksumContent(stTransitHeader& header, const void* data)
     return checksum(data, header.m_wSize);
 }
 
-static DWORD checksumPacket(cPacket *packet, ChecksumXorGenerator& xorGen)
+static DWORD checksumPacket(cPacket *packet, ChecksumXorGenerator * xorGen)
 {
     stTransitHeader *header = packet->GetTransit();
-    DWORD xorVal = (header->m_dwFlags & kEncryptedChecksum) ? xorGen.get(header->m_dwSequence) : 0;
+    DWORD xorVal = (header->m_dwFlags & kEncryptedChecksum) ? xorGen->get(header->m_dwSequence) : 0;
     return checksumHeader(*header) + (checksumContent(*header, packet->GetPayload()) ^ xorVal);
 }
 
@@ -319,7 +319,7 @@ void cNetwork::SendLSPacket(cPacket *Packet, bool IncludeSeq, bool IncrementSeq)
 	stTransitHeader *Head = Packet->GetTransit();
 
     //calc size (remove header from length)
-    Head->m_wSize = Packet->GetLength() - sizeof(stTransitHeader);
+    Head->m_wSize = Packet->GetLength() - (int) sizeof(stTransitHeader);
 
 	if (IncrementSeq)
 	{
@@ -710,8 +710,10 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
         DWORD serverSeed = stream.ReadDWORD();
         DWORD clientSeed = stream.ReadDWORD();
 
-        m_siLoginServer.serverXorGen.init(serverSeed);
-        m_siLoginServer.clientXorGen.init(clientSeed);
+        m_siLoginServer.serverXorGen = new ChecksumXorGenerator();
+        m_siLoginServer.clientXorGen = new ChecksumXorGenerator();
+        m_siLoginServer.serverXorGen->init(serverSeed);
+        m_siLoginServer.clientXorGen->init(clientSeed);
         m_siLoginServer.m_dwFlags |= SF_CRCSEEDS;
 
         DWORD unknownPadding = stream.ReadDWORD();
