@@ -5,6 +5,7 @@ public:
 	cPacket();
 	~cPacket();
 	void Add(std::string & szInput);
+	void AddString32L(std::string & szInput);
     void Add(QWORD qwInput);
     void Add(DWORD dwInput);
     void Add(WORD dwInput);
