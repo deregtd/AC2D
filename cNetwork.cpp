@@ -54,27 +54,49 @@ cNetwork::cNetwork()
 	char acServerIP[32];
 	int acServerPort = 0;
 
+	/* parse command line arguments */
+	/* the options are the same as the original client */
 	for (int arg=0; arg < __argc; arg++)
 	{
+		/* options always have two characters and start with '-' */
 		if (strlen(__argv[arg]) != 2) { continue; }
 		if (__argv[arg][0] == '-')
 		{
 			switch (__argv[arg][1])
 			{
+				/* server IP address */
 				case 'h':
 				{
 					if (arg + 1 < __argc) {
 						strcpy(acServerIP, __argv[arg+1]);
-						acServerPort = atoi(strchr(acServerIP,':')+1);
-						*strchr(acServerIP,':') = 0;
 					}
 					break;
 				}
+				/* port number */
+				case 'p':
+				{
+					if (arg + 1 < __argc) {
+						acServerPort = atoi(__argv[arg+1]);
+					}
+					break;
+				}
+
+				/* account */
 				case 'a':
 				{
 					if (arg + 1 < __argc) {
 						ZeroMemory(m_zAccountName, 40);
 						strcpy(m_zAccountName, __argv[arg+1]);
+						// check if password is provided
+						char* password_index = strchr(m_zAccountName, ':');
+						if (password_index == NULL) {
+							m_zPassword[0] = 0;
+						} else {
+							strcpy(m_zPassword, password_index + 1);
+							// end account name string at the colon
+							*password_index = 0;
+						}
+						
 					}
 					break;
 				}
@@ -82,15 +104,21 @@ cNetwork::cNetwork()
 		}
 	}
 
-	HKEY hkTicket;
-	if (!RegOpenKey(HKEY_CURRENT_USER,"Software\\Turbine\\AC1",&hkTicket))
-	{
-		m_zTicketSize = 0xf4;
-		DWORD tpout = 0x100;
-		if (RegQueryValueEx(hkTicket, "GLSTicket", NULL, NULL, m_zTicket, &tpout))
+	if (m_zPassword[0] == 0) {
+		// password wasn't provided at command line so use GLSTicket
+		HKEY hkTicket;
+		if (!RegOpenKey(HKEY_CURRENT_USER, "Software\\Turbine\\AC1", &hkTicket))
 		{
-            MessageBox(NULL, "GLSTicket not found!", "Error", MB_OK);
+			m_zTicketSize = 0xf4;
+			DWORD tpout = 0x100;
+			if (RegQueryValueEx(hkTicket, "GLSTicket", NULL, NULL, m_zTicket, &tpout))
+			{
+				MessageBox(NULL, "GLSTicket not found!", "Error", MB_OK);
+			}
 		}
+	}
+	else {
+		m_zTicketSize = 0;
 	}
 
 	m_siLoginServer.m_saServer.sin_family = AF_INET;
@@ -447,16 +475,33 @@ void cNetwork::Connect()
     stTransitHeader header;
     header.m_dwFlags = 0x00010000;
     LoginPacket->Add(&header, sizeof(stTransitHeader));
-    LoginPacket->Add(std::string("1802"));
-    LoginPacket->Add((DWORD)0x00000116);    //Actually a size of data left?
-    LoginPacket->Add((DWORD)0x40000002);
-    LoginPacket->Add((DWORD)0);
-    LoginPacket->Add((DWORD)time(NULL));
-    LoginPacket->Add(std::string(m_zAccountName));
-	LoginPacket->Add((DWORD) 0);
-	LoginPacket->Add((DWORD) 0x000000F6);
-	LoginPacket->Add((WORD) 0xF480);
-	LoginPacket->Add(m_zTicket, m_zTicketSize);
+    LoginPacket->Add(std::string("1802")); // magic string
+	// Data length left in packet including ticket (FIXME: calculate this, but ACEmulator doesn't seem to care)
+	if (m_zPassword[0] != 0) {
+		LoginPacket->Add((DWORD)0x00000020);
+	} else {
+		LoginPacket->Add((DWORD)0x00000116);    
+	}
+	// Authentication Type
+	if (m_zPassword[0] != 0) {
+		LoginPacket->Add((DWORD)kAuthAccountPassword);
+	} else {
+		LoginPacket->Add((DWORD)kAuthGlsTicket);
+	}
+    LoginPacket->Add((DWORD)0x00000000);  // Authentication Flags 
+    LoginPacket->Add((DWORD)time(NULL)); // Timestamp
+    LoginPacket->Add(std::string(m_zAccountName)); // Account name
+
+	// Empty string for special admin account name
+	LoginPacket->Add(std::string());
+
+	if (m_zPassword[0] != 0) {
+		LoginPacket->AddString32L(std::string(m_zPassword)); // Password uses weird 32L format
+	} else {
+		LoginPacket->Add((DWORD)0x000000F6);
+		LoginPacket->Add((WORD)0xF480);
+		LoginPacket->Add(m_zTicket, m_zTicketSize);
+	}
 
 	SendLSPacket(LoginPacket, true, false);
 

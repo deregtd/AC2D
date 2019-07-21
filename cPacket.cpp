@@ -21,9 +21,45 @@ void cPacket::Add(std::string & szInput)
 	if( m_iLength + iStringLen > m_iMaxLength )
 		MessageBox(NULL, "Fix this", "Now", MB_ICONERROR);
 
+	// strings are preceded by 2-byte length...
 	Add( (WORD) iStringLen );
 
+	// ...followed by the string characters with no null terminator
 	memcpy( m_pbDataPtr, szInput.c_str(), iStringLen );
+	m_pbDataPtr += iStringLen;
+	m_iLength += iStringLen;
+
+	AlignDWORD();
+}
+
+void cPacket::AddString32L(std::string & szInput)
+{
+	// From the ACE source: 
+	// " 32L strings are crazy.  the only place this is known as of time of writing this is in the
+    // Login header packet.  it's a DWORD of the data length, followed by a packed word of the 
+    // string length.  for most cases, this means the string comes out with a 1 or 2 character
+    // prefix that just needs to get tossed. "
+	int iStringLen = (int)szInput.length();
+	int packedStringLengthBytes = 1 + int(iStringLen > 255);
+
+
+	if (m_iLength + iStringLen > m_iMaxLength)
+		MessageBox(NULL, "Fix this", "Now", MB_ICONERROR);
+
+
+	// 32L strings are preceded by a DWORD of data length...
+	Add((DWORD)iStringLen + packedStringLengthBytes);
+	// and a packed word of the string length
+	if (iStringLen > 255) {
+		Add((WORD)iStringLen);
+	}
+	else {
+		Add((BYTE)iStringLen);
+	}
+	
+
+	// ...followed by the string characters with no null terminator
+	memcpy(m_pbDataPtr, szInput.c_str(), iStringLen);
 	m_pbDataPtr += iStringLen;
 	m_iLength += iStringLen;
 
