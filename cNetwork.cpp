@@ -25,6 +25,7 @@ cNetwork::cNetwork()
 {
 	m_dwGUIDLogin = 0;
 	f74ccount = 0;
+    m_zPassword[0] = 0;
 
 	WSADATA	wsaData;
 	USHORT wVR = 0x0202;
@@ -69,6 +70,8 @@ cNetwork::cNetwork()
 				{
 					if (arg + 1 < __argc) {
 						strcpy(acServerIP, __argv[arg+1]);
+                        acServerPort = atoi(strchr(acServerIP, ':')+1);
+                        *strchr(acServerIP, ':') = 0;
 					}
 					break;
 				}
@@ -89,9 +92,7 @@ cNetwork::cNetwork()
 						strcpy(m_zAccountName, __argv[arg+1]);
 						// check if password is provided
 						char* password_index = strchr(m_zAccountName, ':');
-						if (password_index == NULL) {
-							m_zPassword[0] = 0;
-						} else {
+						if (password_index != NULL) {
 							strcpy(m_zPassword, password_index + 1);
 							// end account name string at the colon
 							*password_index = 0;
@@ -100,6 +101,16 @@ cNetwork::cNetwork()
 					}
 					break;
 				}
+
+                /* password */
+                case 'v':
+                {
+                    if (arg + 1 < __argc) {
+                        ZeroMemory(m_zPassword, 100);
+                        strcpy(m_zPassword, __argv[arg+1]);
+                    }
+                    break;
+                }
 			}
 		}
 	}
