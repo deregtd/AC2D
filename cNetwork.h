@@ -49,7 +49,7 @@ enum PacketFlags
 {
     kRetransmission = 0x00000001,
     kEncryptedChecksum = 0x00000002,
-    kBlobFragments = 0x00000004,
+    kBlobFragments = 0x00000004, // Packet contains a fragment of a larger blob
     kServerSwitch = 0x00000100, // CServerSwitchStruct (60, kHighPriority|kCountsAsTouch)
     kUnknown1 = 0x00000200, // CLogonRouteHeader (sockaddr_in) (7, kDisposable|kExclusive|kNotConn)
     kUnknown2 = 0x00000400, // EmptyHeader (7, kDisposable|kExclusive|kNotConn)
@@ -170,7 +170,7 @@ public:
 
 private:
     void SendConnectResponse();
-    
+	
 	cInterface *m_Interface;
 	cObjectDB *m_ObjectDB;
 	cCharInfo *m_CharInfo;

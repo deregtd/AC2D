@@ -13,7 +13,7 @@ bool SockCompare(SOCKADDR_IN *a, SOCKADDR_IN *b)
 		(a->sin_port != b->sin_port)
 		&&
 		(a->sin_port != b->sin_port + 0x0100)
-		//Loginserver is retarded and sends from one port higher sometimes, so we have to account
+		// XXX: Loginserver is retarded and sends from one port higher sometimes, so we have to account
 		//		and allow for that...
 		)
 		) return false;
@@ -40,7 +40,7 @@ cNetwork::cNetwork()
 	bPortalMode = false;
 
 	int iError = SOCKET_ERROR;
-	int iSrcPort = 9010;
+	int iSrcPort = 0; // binding to port "0" tells winsock to get a random open port
 	while (iError == SOCKET_ERROR)
 	{
 		siSockAddr.sin_port = htons( iSrcPort );
@@ -342,6 +342,7 @@ static DWORD checksumPacket(cPacket *packet, ChecksumXorGenerator * xorGen)
     return checksumHeader(*header) + (checksumContent(*header, packet->GetPayload()) ^ xorVal);
 }
 
+/* Send packet to login server */
 void cNetwork::SendLSPacket(cPacket *Packet, bool IncludeSeq, bool IncrementSeq)
 {
 	stTransitHeader *Head = Packet->GetTransit();
@@ -408,19 +409,18 @@ void cNetwork::SendLostPacket(int iSendSequence, stServerInfo *Target)
 
 void cNetwork::SendPacket(cPacket *Packet, stServerInfo *Target)
 {
-//	m_Interface->OutputConsoleString("Sending Packet: %i to %s:%i", Packet->GetTransit()->m_dwSequence, inet_ntoa(Target->m_saServer.sin_addr), htons(Target->m_saServer.sin_port));
-
 	BYTE *pbData = Packet->GetData();
 	int iLength = Packet->GetLength();
 
-    if (Packet->GetTransit()->m_dwFlags == kConnectResponse)
+    // server wants connect response on next higher port
+	if (Packet->GetTransit()->m_dwFlags == kConnectResponse)
     {
         Target->m_saServer.sin_port = htons(Target->m_wBasePort + 1);
-    }
-    else
-    {
+    } else {
         Target->m_saServer.sin_port = htons(Target->m_wBasePort);
     }
+
+	//m_Interface->OutputConsoleString("Sending Packet: Seq: %i, Dest: %s:%i", Packet->GetTransit()->m_dwSequence, inet_ntoa(Target->m_saServer.sin_addr), htons(Target->m_saServer.sin_port));
 
 	int tp = sendto(m_sSocket, (char *) pbData, iLength, NULL, (SOCKADDR *)&Target->m_saServer, sizeof( SOCKADDR ) );
 
@@ -439,6 +439,7 @@ void cNetwork::SendPacket(cPacket *Packet, stServerInfo *Target)
 		Target->m_dwLastPacketSent = GetTickCount();
 		Unlock();	
 	}
+
 }
 
 void cNetwork::SetInterface(cInterface *Interface)
@@ -629,14 +630,17 @@ void cNetwork::CheckPings()
 
 void cNetwork::Run()
 {
+	unsigned int TIMEOUT_MS = 1000;
 	//message loop for the network thread
 	while (!m_bQuit)
 	{
 		//keep trying to connect to login server if first time doesn't work
 		if (!(m_siLoginServer.m_dwFlags & SF_CONNECTED))
 		{
-			if ((m_siLoginServer.m_dwLastConnectAttempt + 10000) < GetTickCount())
+			// timeout trying to connect
+			if ((m_siLoginServer.m_dwLastConnectAttempt + TIMEOUT_MS) < GetTickCount())
 			{
+				m_Interface->OutputConsoleString("Timed out after %d ms.", TIMEOUT_MS);
 				m_Interface->OutputConsoleString("Couldn't connect first time, trying again..");
 				Connect();
 			}
@@ -677,7 +681,7 @@ void cNetwork::Run()
 				char tps[50];
 				char *tps2 = inet_ntoa(m_siLoginServer.m_saServer.sin_addr);
 				strcpy(tps, tps2);
-				m_Interface->OutputConsoleString("Unknown Target: %s:%i.  LS: %s:%i"
+				m_Interface->OutputConsoleString("Unknown Target: %s:%i.  Login server: %s:%i"
 					, inet_ntoa(tp->sin_addr)
 					, (int)ntohs(tp->sin_port)
 					, tps
@@ -739,8 +743,11 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
         dwFlags &= ~kAckSequence;
     }
 
+	// Second step of the connection process is to receive a Connect Request packet from the server
     if (dwFlags & kConnectRequest)
     {
+		m_Interface->OutputConsoleString("Received connection request from server...");
+
         // Connection request from the server
         m_siLoginServer.m_wTable = Head->m_wTable;
         m_siLoginServer.m_dwLastSyncRecv = GetTickCount();
@@ -748,8 +755,8 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
         m_siLoginServer.m_dwFlags |= SF_CONNECTED;
 
         m_siLoginServer.m_flServerTime = stream.ReadDouble(); //Time sync
-        m_siLoginServer.m_qwCookie = stream.ReadQWORD();
-        m_siLoginServer.m_wLogicalID = stream.ReadWORD();
+        m_siLoginServer.m_qwCookie = stream.ReadQWORD();  // Connection cookie
+		m_siLoginServer.m_wLogicalID = stream.ReadWORD(); // Client ID for our session
         WORD paddingWord = stream.ReadWORD();
 
         DWORD serverSeed = stream.ReadDWORD();
@@ -763,11 +770,22 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 
         DWORD unknownPadding = stream.ReadDWORD();
 
+		m_Interface->SetConnProgress(0.1);
+		// XXX: delay to avoid race condition where server hasn't entered AuthConnectResponse state
+		Sleep(500);
+		m_Interface->SetConnProgress(0.5);
+		m_Interface->OutputConsoleString("Sending connect response...");
+		// Final third step of the connection process is to send connect response packet with cookie
         SendConnectResponse();
-        Sleep(300);
-        SendConnectResponse();
+		m_Interface->SetConnProgress(0.2);
 
         dwFlags &= ~kConnectRequest;
+
+		// login server is world server unless we get a redirect
+		SOCKADDR_IN tpaddr;
+		memcpy(&tpaddr, &m_siLoginServer.m_saServer, sizeof(tpaddr));
+		tpaddr.sin_port = htons(m_siLoginServer.m_wBasePort);
+		AddWorldServer(tpaddr);
     }
     
     if (dwFlags & kNetError1)
@@ -801,9 +819,10 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
         				break;
         
         			cMessage *scan = *it;
+					/* fragment matches existing sequence we have started receiving */
         			if ( scan->m_dwSequence == fragHead->m_dwSequence)
         			{
-        				scan->AddChunk(fragData, payloadSize, fragHead->m_wIndex);
+						scan->AddChunk(fragData, payloadSize, fragHead->m_wIndex);
         				bAdded = true;
         
         				if ( scan->IsComplete() )
@@ -1009,15 +1028,18 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 void cNetwork::SendConnectResponse()
 {
     stTransitHeader header;
-    header.m_dwFlags = 0x00080000;
+    header.m_dwFlags = kConnectResponse;
     cPacket *connectReply = new cPacket();
     connectReply->Add(&header, sizeof(header));
     connectReply->Add(m_siLoginServer.m_qwCookie);
     SendLSPacket(connectReply, false, false);
 }
 
+
 void cNetwork::ProcessWSPacket(cPacket *Packet, stServerInfo *Server)
 {
+	// XXX: for now, everything is handled in ProcessLSPacket
+	return ProcessLSPacket(Packet);
 ////	m_Interface->OutputConsoleString("Worldserver Packet...");
 //	stTransitHeader *Head = (stTransitHeader *) Packet->GetData();
 //	BYTE *Data = Packet->GetData() + sizeof(stTransitHeader);
@@ -2679,7 +2701,10 @@ stServerInfo * cNetwork::AddWorldServer(SOCKADDR_IN NewServer)
 	}
 	stServerInfo tpNewServer;
 
-	m_Interface->OutputConsoleString("New Worldserver!  Creating!");
+	m_Interface->OutputConsoleString("Adding World Server: %s:%i",
+									  inet_ntoa(NewServer.sin_addr),
+									  (int)ntohs(NewServer.sin_port));
+
 
 	//fill in tpNewServer struct...
 	memcpy(&tpNewServer.m_saServer, &NewServer, sizeof(SOCKADDR_IN));
