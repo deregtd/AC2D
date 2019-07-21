@@ -70,8 +70,10 @@ cNetwork::cNetwork()
 				{
 					if (arg + 1 < __argc) {
 						strcpy(acServerIP, __argv[arg+1]);
-                        acServerPort = atoi(strchr(acServerIP, ':')+1);
-                        *strchr(acServerIP, ':') = 0;
+                        if (strchr(acServerIP, ':') != NULL) {
+                            acServerPort = atoi(strchr(acServerIP, ':') + 1);
+                            *strchr(acServerIP, ':') = 0;
+                        }
 					}
 					break;
 				}
