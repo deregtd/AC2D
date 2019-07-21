@@ -13,7 +13,7 @@ bool SockCompare(SOCKADDR_IN *a, SOCKADDR_IN *b)
 		(a->sin_port != b->sin_port)
 		&&
 		(a->sin_port != b->sin_port + 0x0100)
-		//Loginserver is retarded and sends from one port higher sometimes, so we have to account
+		// XXX: Loginserver is retarded and sends from one port higher sometimes, so we have to account
 		//		and allow for that...
 		)
 		) return false;
@@ -25,6 +25,7 @@ cNetwork::cNetwork()
 {
 	m_dwGUIDLogin = 0;
 	f74ccount = 0;
+    m_zPassword[0] = 0;
 
 	WSADATA	wsaData;
 	USHORT wVR = 0x0202;
@@ -40,7 +41,7 @@ cNetwork::cNetwork()
 	bPortalMode = false;
 
 	int iError = SOCKET_ERROR;
-	int iSrcPort = 9010;
+	int iSrcPort = 0; // binding to port "0" tells winsock to get a random open port
 	while (iError == SOCKET_ERROR)
 	{
 		siSockAddr.sin_port = htons( iSrcPort );
@@ -54,43 +55,81 @@ cNetwork::cNetwork()
 	char acServerIP[32];
 	int acServerPort = 0;
 
+	/* parse command line arguments */
+	/* the options are the same as the original client */
 	for (int arg=0; arg < __argc; arg++)
 	{
+		/* options always have two characters and start with '-' */
 		if (strlen(__argv[arg]) != 2) { continue; }
 		if (__argv[arg][0] == '-')
 		{
 			switch (__argv[arg][1])
 			{
+				/* server IP address */
 				case 'h':
 				{
 					if (arg + 1 < __argc) {
 						strcpy(acServerIP, __argv[arg+1]);
-						acServerPort = atoi(strchr(acServerIP,':')+1);
-						*strchr(acServerIP,':') = 0;
+                        acServerPort = atoi(strchr(acServerIP, ':')+1);
+                        *strchr(acServerIP, ':') = 0;
 					}
 					break;
 				}
+				/* port number */
+				case 'p':
+				{
+					if (arg + 1 < __argc) {
+						acServerPort = atoi(__argv[arg+1]);
+					}
+					break;
+				}
+
+				/* account */
 				case 'a':
 				{
 					if (arg + 1 < __argc) {
 						ZeroMemory(m_zAccountName, 40);
 						strcpy(m_zAccountName, __argv[arg+1]);
+						// check if password is provided
+						char* password_index = strchr(m_zAccountName, ':');
+						if (password_index != NULL) {
+							strcpy(m_zPassword, password_index + 1);
+							// end account name string at the colon
+							*password_index = 0;
+						}
+						
 					}
 					break;
 				}
+
+                /* password */
+                case 'v':
+                {
+                    if (arg + 1 < __argc) {
+                        ZeroMemory(m_zPassword, 100);
+                        strcpy(m_zPassword, __argv[arg+1]);
+                    }
+                    break;
+                }
 			}
 		}
 	}
 
-	HKEY hkTicket;
-	if (!RegOpenKey(HKEY_CURRENT_USER,"Software\\Turbine\\AC1",&hkTicket))
-	{
-		m_zTicketSize = 0xf4;
-		DWORD tpout = 0x100;
-		if (RegQueryValueEx(hkTicket, "GLSTicket", NULL, NULL, m_zTicket, &tpout))
+	if (m_zPassword[0] == 0) {
+		// password wasn't provided at command line so use GLSTicket
+		HKEY hkTicket;
+		if (!RegOpenKey(HKEY_CURRENT_USER, "Software\\Turbine\\AC1", &hkTicket))
 		{
-            MessageBox(NULL, "GLSTicket not found!", "Error", MB_OK);
+			m_zTicketSize = 0xf4;
+			DWORD tpout = 0x100;
+			if (RegQueryValueEx(hkTicket, "GLSTicket", NULL, NULL, m_zTicket, &tpout))
+			{
+				MessageBox(NULL, "GLSTicket not found!", "Error", MB_OK);
+			}
 		}
+	}
+	else {
+		m_zTicketSize = 0;
 	}
 
 	m_siLoginServer.m_saServer.sin_family = AF_INET;
@@ -314,6 +353,7 @@ static DWORD checksumPacket(cPacket *packet, ChecksumXorGenerator * xorGen)
     return checksumHeader(*header) + (checksumContent(*header, packet->GetPayload()) ^ xorVal);
 }
 
+/* Send packet to login server */
 void cNetwork::SendLSPacket(cPacket *Packet, bool IncludeSeq, bool IncrementSeq)
 {
 	stTransitHeader *Head = Packet->GetTransit();
@@ -380,19 +420,18 @@ void cNetwork::SendLostPacket(int iSendSequence, stServerInfo *Target)
 
 void cNetwork::SendPacket(cPacket *Packet, stServerInfo *Target)
 {
-//	m_Interface->OutputConsoleString("Sending Packet: %i to %s:%i", Packet->GetTransit()->m_dwSequence, inet_ntoa(Target->m_saServer.sin_addr), htons(Target->m_saServer.sin_port));
-
 	BYTE *pbData = Packet->GetData();
 	int iLength = Packet->GetLength();
 
-    if (Packet->GetTransit()->m_dwFlags == kConnectResponse)
+    // server wants connect response on next higher port
+	if (Packet->GetTransit()->m_dwFlags == kConnectResponse)
     {
         Target->m_saServer.sin_port = htons(Target->m_wBasePort + 1);
-    }
-    else
-    {
+    } else {
         Target->m_saServer.sin_port = htons(Target->m_wBasePort);
     }
+
+	//m_Interface->OutputConsoleString("Sending Packet: Seq: %i, Dest: %s:%i", Packet->GetTransit()->m_dwSequence, inet_ntoa(Target->m_saServer.sin_addr), htons(Target->m_saServer.sin_port));
 
 	int tp = sendto(m_sSocket, (char *) pbData, iLength, NULL, (SOCKADDR *)&Target->m_saServer, sizeof( SOCKADDR ) );
 
@@ -411,6 +450,7 @@ void cNetwork::SendPacket(cPacket *Packet, stServerInfo *Target)
 		Target->m_dwLastPacketSent = GetTickCount();
 		Unlock();	
 	}
+
 }
 
 void cNetwork::SetInterface(cInterface *Interface)
@@ -447,16 +487,33 @@ void cNetwork::Connect()
     stTransitHeader header;
     header.m_dwFlags = 0x00010000;
     LoginPacket->Add(&header, sizeof(stTransitHeader));
-    LoginPacket->Add(std::string("1802"));
-    LoginPacket->Add((DWORD)0x00000116);    //Actually a size of data left?
-    LoginPacket->Add((DWORD)0x40000002);
-    LoginPacket->Add((DWORD)0);
-    LoginPacket->Add((DWORD)time(NULL));
-    LoginPacket->Add(std::string(m_zAccountName));
-	LoginPacket->Add((DWORD) 0);
-	LoginPacket->Add((DWORD) 0x000000F6);
-	LoginPacket->Add((WORD) 0xF480);
-	LoginPacket->Add(m_zTicket, m_zTicketSize);
+    LoginPacket->Add(std::string("1802")); // magic string
+	// Data length left in packet including ticket (FIXME: calculate this, but ACEmulator doesn't seem to care)
+	if (m_zPassword[0] != 0) {
+		LoginPacket->Add((DWORD)0x00000020);
+	} else {
+		LoginPacket->Add((DWORD)0x00000116);    
+	}
+	// Authentication Type
+	if (m_zPassword[0] != 0) {
+		LoginPacket->Add((DWORD)kAuthAccountPassword);
+	} else {
+		LoginPacket->Add((DWORD)kAuthGlsTicket);
+	}
+    LoginPacket->Add((DWORD)0x00000000);  // Authentication Flags 
+    LoginPacket->Add((DWORD)time(NULL)); // Timestamp
+    LoginPacket->Add(std::string(m_zAccountName)); // Account name
+
+	// Empty string for special admin account name
+	LoginPacket->Add(std::string());
+
+	if (m_zPassword[0] != 0) {
+		LoginPacket->AddString32L(std::string(m_zPassword)); // Password uses weird 32L format
+	} else {
+		LoginPacket->Add((DWORD)0x000000F6);
+		LoginPacket->Add((WORD)0xF480);
+		LoginPacket->Add(m_zTicket, m_zTicketSize);
+	}
 
 	SendLSPacket(LoginPacket, true, false);
 
@@ -584,14 +641,17 @@ void cNetwork::CheckPings()
 
 void cNetwork::Run()
 {
+	unsigned int TIMEOUT_MS = 1000;
 	//message loop for the network thread
 	while (!m_bQuit)
 	{
 		//keep trying to connect to login server if first time doesn't work
 		if (!(m_siLoginServer.m_dwFlags & SF_CONNECTED))
 		{
-			if ((m_siLoginServer.m_dwLastConnectAttempt + 10000) < GetTickCount())
+			// timeout trying to connect
+			if ((m_siLoginServer.m_dwLastConnectAttempt + TIMEOUT_MS) < GetTickCount())
 			{
+				m_Interface->OutputConsoleString("Timed out after %d ms.", TIMEOUT_MS);
 				m_Interface->OutputConsoleString("Couldn't connect first time, trying again..");
 				Connect();
 			}
@@ -632,7 +692,7 @@ void cNetwork::Run()
 				char tps[50];
 				char *tps2 = inet_ntoa(m_siLoginServer.m_saServer.sin_addr);
 				strcpy(tps, tps2);
-				m_Interface->OutputConsoleString("Unknown Target: %s:%i.  LS: %s:%i"
+				m_Interface->OutputConsoleString("Unknown Target: %s:%i.  Login server: %s:%i"
 					, inet_ntoa(tp->sin_addr)
 					, (int)ntohs(tp->sin_port)
 					, tps
@@ -694,8 +754,11 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
         dwFlags &= ~kAckSequence;
     }
 
+	// Second step of the connection process is to receive a Connect Request packet from the server
     if (dwFlags & kConnectRequest)
     {
+		m_Interface->OutputConsoleString("Received connection request from server...");
+
         // Connection request from the server
         m_siLoginServer.m_wTable = Head->m_wTable;
         m_siLoginServer.m_dwLastSyncRecv = GetTickCount();
@@ -703,8 +766,8 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
         m_siLoginServer.m_dwFlags |= SF_CONNECTED;
 
         m_siLoginServer.m_flServerTime = stream.ReadDouble(); //Time sync
-        m_siLoginServer.m_qwCookie = stream.ReadQWORD();
-        m_siLoginServer.m_wLogicalID = stream.ReadWORD();
+        m_siLoginServer.m_qwCookie = stream.ReadQWORD();  // Connection cookie
+		m_siLoginServer.m_wLogicalID = stream.ReadWORD(); // Client ID for our session
         WORD paddingWord = stream.ReadWORD();
 
         DWORD serverSeed = stream.ReadDWORD();
@@ -718,11 +781,22 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 
         DWORD unknownPadding = stream.ReadDWORD();
 
+		m_Interface->SetConnProgress(0.1);
+		// XXX: delay to avoid race condition where server hasn't entered AuthConnectResponse state
+		Sleep(500);
+		m_Interface->SetConnProgress(0.5);
+		m_Interface->OutputConsoleString("Sending connect response...");
+		// Final third step of the connection process is to send connect response packet with cookie
         SendConnectResponse();
-        Sleep(300);
-        SendConnectResponse();
+		m_Interface->SetConnProgress(0.2);
 
         dwFlags &= ~kConnectRequest;
+
+		// login server is world server unless we get a redirect
+		SOCKADDR_IN tpaddr;
+		memcpy(&tpaddr, &m_siLoginServer.m_saServer, sizeof(tpaddr));
+		tpaddr.sin_port = htons(m_siLoginServer.m_wBasePort);
+		AddWorldServer(tpaddr);
     }
     
     if (dwFlags & kNetError1)
@@ -756,9 +830,10 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
         				break;
         
         			cMessage *scan = *it;
+					/* fragment matches existing sequence we have started receiving */
         			if ( scan->m_dwSequence == fragHead->m_dwSequence)
         			{
-        				scan->AddChunk(fragData, payloadSize, fragHead->m_wIndex);
+						scan->AddChunk(fragData, payloadSize, fragHead->m_wIndex);
         				bAdded = true;
         
         				if ( scan->IsComplete() )
@@ -964,15 +1039,18 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 void cNetwork::SendConnectResponse()
 {
     stTransitHeader header;
-    header.m_dwFlags = 0x00080000;
+    header.m_dwFlags = kConnectResponse;
     cPacket *connectReply = new cPacket();
     connectReply->Add(&header, sizeof(header));
     connectReply->Add(m_siLoginServer.m_qwCookie);
     SendLSPacket(connectReply, false, false);
 }
 
+
 void cNetwork::ProcessWSPacket(cPacket *Packet, stServerInfo *Server)
 {
+	// XXX: for now, everything is handled in ProcessLSPacket
+	return ProcessLSPacket(Packet);
 ////	m_Interface->OutputConsoleString("Worldserver Packet...");
 //	stTransitHeader *Head = (stTransitHeader *) Packet->GetData();
 //	BYTE *Data = Packet->GetData() + sizeof(stTransitHeader);
@@ -2634,7 +2712,10 @@ stServerInfo * cNetwork::AddWorldServer(SOCKADDR_IN NewServer)
 	}
 	stServerInfo tpNewServer;
 
-	m_Interface->OutputConsoleString("New Worldserver!  Creating!");
+	m_Interface->OutputConsoleString("Adding World Server: %s:%i",
+									  inet_ntoa(NewServer.sin_addr),
+									  (int)ntohs(NewServer.sin_port));
+
 
 	//fill in tpNewServer struct...
 	memcpy(&tpNewServer.m_saServer, &NewServer, sizeof(SOCKADDR_IN));
