@@ -21,6 +21,12 @@ const float max_sidestep_anim_rate	= 3.0f;
 #define SF_CONNECTED (1 << 0)
 #define SF_CRCSEEDS (1 << 2)
 
+// timeout and interval settings
+// Connection attempt timeout
+#define TIMEOUT_MS  1000
+// Interval between ack messages sent by us
+#define ACK_INTERVAL_MS 2000
+
 //enum OptionalHeaderFlags
 //{
 //    kDisposable = 0x00000001, // this header may be removed from a retransmission
@@ -49,10 +55,10 @@ enum PacketFlags
 {
     kRetransmission = 0x00000001,
     kEncryptedChecksum = 0x00000002,
-    kBlobFragments = 0x00000004, // Packet contains a fragment of a larger blob
+    kBlobFragments = 0x00000004, // Packet contains a fragment of a larger blob. All world packets are blob fragments.
     kServerSwitch = 0x00000100, // CServerSwitchStruct (60, kHighPriority|kCountsAsTouch)
-    kUnknown1 = 0x00000200, // CLogonRouteHeader (sockaddr_in) (7, kDisposable|kExclusive|kNotConn)
-    kUnknown2 = 0x00000400, // EmptyHeader (7, kDisposable|kExclusive|kNotConn)
+    kLogonServerAddr = 0x00000200, // CLogonRouteHeader (sockaddr_in) (7, kDisposable|kExclusive|kNotConn)
+    kEmptyHeader1 = 0x00000400, // EmptyHeader (7, kDisposable|kExclusive|kNotConn)
     kReferral = 0x00000800, // CReferralStruct (40000062, kExclusive|kHighPriority|kCountsAsTouch|kSigned)
     kRequestRetransmit = 0x00001000, // SeqIDList (33, kDisposable|kExclusive|kShouldPiggyBack|kHighPriority)
     kRejectRetransmit = 0x00002000, // SeqIDList (33, kDisposable|kExclusive|kShouldPiggyBack|kHighPriority)
@@ -85,12 +91,14 @@ struct stServerInfo {
     QWORD   m_qwCookie;
 
 	//Tracking our received packets
+    // Last received packet sequence number in sequence (does not increment if out of sequence)
 	DWORD	m_dwRecvSequence;
 
 	//Logical
 	DWORD	m_dwConnectAttempts;
 
 	//Time based stuff
+    DWORD   m_dwLastPacketAck;
 	DWORD	m_dwLastConnectAttempt;
 	DWORD	m_dwLastPacketSent;
 	DWORD	m_dwLastPing;
@@ -118,15 +126,18 @@ public:
 	void SetCharInfo(cCharInfo *CharInfo);
 
 	void SendLSGameEvent(cPacket *Packet, WORD wGroup);
-	void SendLSMessage(cPacket *Packet, WORD wGroup);
 	void SendWSGameEvent(cPacket *Packet, WORD wGroup);
+    void SendLSMessage(cPacket *Packet, WORD wGroup);
 	void SendWSMessage(cPacket *Packet, WORD wGroup);
 	void SendLSPacket(cPacket *Packet, bool IncludeSeq, bool IncrementSeq);
-	void SendWSPacket(cPacket *Packet, stServerInfo *Target, bool IncludeSeq, bool IncrementSeq);
+	void SendPacket(cPacket *Packet, stServerInfo *Target, bool IncludeSeq, bool IncrementSeq);
 	void SendLostPacket(int iSendSequence, stServerInfo *Target);
 	void SendPacket(cPacket *Packet, stServerInfo *Target);
+    
+    void SendAckPacket(stServerInfo *Server);
 
-	void ProcessLSPacket(cPacket *Packet);
+    void ProcessFragment(cByteStream* stream, stServerInfo *Server);
+	void ProcessPacket(cPacket *Packet, stServerInfo *Server);
 	void ProcessWSPacket(cPacket *Packet, stServerInfo *Server);
 	void ProcessMessage(cMessage *Msg, stServerInfo *Server);
 
@@ -141,7 +152,10 @@ public:
 	void PingServer(stServerInfo *Server);
 	void SyncServer(stServerInfo *Server);
 
-	void EnterGame(DWORD GUID);
+    void SendDDDInterrogationResponse();
+    void SendDDDEndMessage();
+	void SendEnterWorldRequest(DWORD GUID);
+    void SendEnterWorldMessage(DWORD GUID, char *account);
 	void DownloadLandblock(DWORD Landblock);
 	void SendPositionUpdate(stLocation *Location, stMoveInfo *MoveInfo);
 	void SendAnimUpdate(int iFB, int iStrafe, int iTurn, bool bRunning);
@@ -165,6 +179,7 @@ public:
 
 	stServerInfo * AddWorldServer(SOCKADDR_IN NewServer);
 	void SetActiveWorldServer(SOCKADDR_IN NewServer);
+    void DumpWorldServerList();
 
 	void SendMaterialize();
 

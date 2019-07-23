@@ -319,7 +319,7 @@ void cInterface::OutputConsoleString(std::string & Output)
 	OutputDebugString(Output.c_str());
 	OutputDebugString(_T("\r\n"));
 	
-	FILE *out = fopen("c:\\AC2DConsole.txt","at");
+	FILE *out = fopen("AC2DConsole.txt","at");
 	if (out)
 	{
 		fprintf(out, "%s\r\n", Output.c_str());
@@ -535,6 +535,13 @@ void cInterface::SetInterfaceMode(eInterfaceMode Mode)
 		for (int i=0;i<5;i++)
 			m_stCharList[i]->SetVisible(true);
 		break;
+    case eEnteringGame:
+        m_picEnterGame->SetVisible(false);
+        m_stMOTD->SetVisible(true);
+        m_picSelChar->SetVisible(true);
+        for (int i = 0;i < 5;i++)
+            m_stCharList[i]->SetVisible(true);
+        break;
 	case eGame:
 		m_picEnterGame->SetVisible(false);
 		m_stMOTD->SetVisible(false);
@@ -585,13 +592,13 @@ void cInterface::SetMOTD(char *MOTD)
 	Unlock();
 }
 
-void cInterface::SetWorldPlayers(char *WorldName, DWORD Players)
+void cInterface::SetWorldPlayers(char *WorldName, DWORD Players, DWORD MaxPlayers)
 {
 	m_dwNumPlayers = Players;
 	strcpy(m_sWorldName, WorldName);
 
 	char blah[500];
-	sprintf(blah, "World: %s, Players: %i", WorldName, Players);
+	sprintf(blah, "World: %s, Players: %i/%i", WorldName, Players, MaxPlayers);
 	SetMOTD(blah);
 }
 
@@ -1036,12 +1043,10 @@ bool cInterface::OnMouseUp( IWindow & Window, float X, float Y, unsigned long Bu
 		if (&Window == m_picEnterGame)
 		{
 			//Enter game
-
+            OutputConsoleString("Trying to enter game...");
 			m_mwRadar->SetChar(m_dwSelChar);
-
 			m_picEnterGame->SetPicture(0x06004CB2);
-
-			m_Network->EnterGame(m_dwSelChar);
+			m_Network->SendEnterWorldRequest(m_dwSelChar);
 		}
 	}
 

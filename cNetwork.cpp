@@ -168,6 +168,7 @@ void cNetwork::Reset()
 	m_siLoginServer.m_dwLastPing = GetTickCount();
 	m_siLoginServer.m_dwLastSyncSent = 0;
 	m_siLoginServer.m_dwRecvSequence = 0;
+    m_siLoginServer.m_dwLastPacketAck = GetTickCount();
 	m_siLoginServer.m_dwLastPacketSent = GetTickCount();
 	m_siLoginServer.m_dwLastConnectAttempt = GetTickCount();
 
@@ -184,66 +185,9 @@ void cNetwork::Reset()
 
 	m_dwStartTicks = GetTickCount();
 	m_dwGameEventOut = 0;
-	m_dwFragmentSequenceOut = 1;
-}
-
-void cNetwork::SendWSPacket(cPacket *Packet, stServerInfo *Target, bool IncludeSeq, bool IncrementSeq)
-{
-#ifndef TerrainOnly
-	if (!Target)
-		return;
-
-	stTransitHeader *Head = Packet->GetTransit();
-
-	if (IncrementSeq)
-	{
-        Target->m_dwSendSequence++;
-	}
-
-	if (IncludeSeq) {
-        Head->m_dwSequence = Target->m_dwSendSequence;
-		Head->m_wTime = GetTime();
-	}
-	else {
-		Head->m_dwSequence = 0;
-		Head->m_wTime = 0;
-	}
-
-	if (Target->m_dwFlags & SF_CONNECTED) {
-		Head->m_wID = Target->m_wLogicalID;
-		Head->m_wTable = Target->m_wTable;
-	}
-	else {
-		Head->m_wID = 0;
-		Head->m_wTable = 0;
-	}
-
-	if (Packet->GetTransit()->m_dwFlags & 0x200)
-	{
-		if (Target->m_dwFlags & SF_CRCSEEDS)
-		{
-			//DWORD dwNewCRC, dwXorVal;
-			//dwNewCRC = Calc200_CRC( Packet->GetData() );
-			//dwXorVal = GetSendXORVal( Target->m_pdwSendCRC );
-			//dwNewCRC ^= dwXorVal;
-			//dwNewCRC += CalcTransportCRC( (DWORD *)Packet->GetData() );
-			//Packet->GetTransit()->m_dwCRC = dwNewCRC;
-			//Packet->m_dwSeed = dwXorVal; //Save XOR value - lost packets need this
-		}
-		else
-		{
-			m_Interface->OutputConsoleString("WS - trying to send 0x200 with no seeds, 'tard!");
-			if (IncludeSeq)
-                Target->m_dwSendSequence--;
-			delete Packet;
-			return;
-		}
-	}
-	//else
-	//	CalcCRC(Packet->GetData(), Packet->GetLength());//non-0x200 generic CRC
-
-	SendPacket(Packet, Target);
-#endif
+    // start 0. we pre-increment for each fragment so the first one out will be 1
+    // XXX: should we be keeping track of this separately for each server? also when do we start it back at 0?
+	m_dwFragmentSequenceOut = 0;
 }
 
 static DWORD checksum(const void* data, size_t size)
@@ -355,33 +299,82 @@ static DWORD checksumPacket(cPacket *packet, ChecksumXorGenerator * xorGen)
     return checksumHeader(*header) + (checksumContent(*header, packet->GetPayload()) ^ xorVal);
 }
 
-/* Send packet to login server */
-void cNetwork::SendLSPacket(cPacket *Packet, bool IncludeSeq, bool IncrementSeq)
+void cNetwork::SendPacket(cPacket *Packet, stServerInfo *Target, bool IncludeSeq, bool IncrementSeq)
 {
-	stTransitHeader *Head = Packet->GetTransit();
+#ifndef TerrainOnly
+    if (!Target)
+        return;
+
+    stTransitHeader *Head = Packet->GetTransit();
 
     //calc size (remove header from length)
     Head->m_wSize = Packet->GetLength() - (int) sizeof(stTransitHeader);
 
-	if (IncrementSeq)
-	{
-        m_siLoginServer.m_dwSendSequence++;
-	}
+    if (IncrementSeq)
+    {
+        Target->m_dwSendSequence++;
+    }
 
-	if (IncludeSeq) {
-        Head->m_dwSequence = m_siLoginServer.m_dwSendSequence;
-		Head->m_wTime = GetTime();
-	}
-	else {
-		Head->m_dwSequence = 0;
-		Head->m_wTime = 0;
-	}
+    if (IncludeSeq) {
+        Head->m_dwSequence = Target->m_dwSendSequence;
+        Head->m_wTime = GetTime();
+    }
+    else {
+        Head->m_dwSequence = 0;
+        Head->m_wTime = 0;
+    }
 
-	Head->m_wID = m_siLoginServer.m_wLogicalID;
-	Head->m_wTable = m_siLoginServer.m_wTable;
-	Head->m_dwCRC = checksumPacket(Packet, m_siLoginServer.clientXorGen);
+    if (Target->m_dwFlags & SF_CONNECTED) {
+        Head->m_wID = Target->m_wLogicalID;
+        Head->m_wTable = Target->m_wTable;
+    }
+    else {
+        Head->m_wID = 0;
+        Head->m_wTable = 0;
+    }
 
-	SendPacket(Packet, &m_siLoginServer);
+
+    if (Packet->GetTransit()->m_dwFlags & kEncryptedChecksum)
+    {
+        if (!(Target->m_dwFlags & SF_CRCSEEDS)) {
+            m_Interface->OutputConsoleString("WARNING: trying to send encrypted-checksum packet with no seeds (OK if loginserver)");
+        }
+    }
+    Head->m_dwCRC = checksumPacket(Packet, Target->clientXorGen);
+    
+    SendPacket(Packet, Target);
+#endif
+}
+
+/* Send packet to login server */
+void cNetwork::SendLSPacket(cPacket *Packet, bool IncludeSeq, bool IncrementSeq)
+{
+    return SendPacket(Packet, &m_siLoginServer, IncludeSeq, IncrementSeq);
+	
+ //   stTransitHeader *Head = Packet->GetTransit();
+
+ //   //calc size (remove header from length)
+ //   Head->m_wSize = Packet->GetLength() - (int) sizeof(stTransitHeader);
+
+	//if (IncrementSeq)
+	//{
+ //       m_siLoginServer.m_dwSendSequence++;
+	//}
+
+	//if (IncludeSeq) {
+ //       Head->m_dwSequence = m_siLoginServer.m_dwSendSequence;
+	//	Head->m_wTime = GetTime();
+	//}
+	//else {
+	//	Head->m_dwSequence = 0;
+	//	Head->m_wTime = 0;
+	//}
+
+	//Head->m_wID = m_siLoginServer.m_wLogicalID;
+	//Head->m_wTable = m_siLoginServer.m_wTable;
+	//Head->m_dwCRC = checksumPacket(Packet, m_siLoginServer.clientXorGen);
+
+	//SendPacket(Packet, &m_siLoginServer);
 }
 
 void cNetwork::SendLostPacket(int iSendSequence, stServerInfo *Target)
@@ -536,7 +529,7 @@ void cNetwork::CloseConnection(stServerInfo *Server)
 	if (Server == &m_siLoginServer)
 		SendLSPacket(CloseClient, false, false);
 	else
-		SendWSPacket(CloseClient, Server, false, false);
+		SendPacket(CloseClient, Server, false, false);
 }
 
 void cNetwork::Disconnect()
@@ -580,7 +573,7 @@ void cNetwork::PingServer(stServerInfo *Server)
 	if (Server == &m_siLoginServer)
 		SendLSPacket(Ping, true, false);
 	else
-		SendWSPacket(Ping, Server, true, false);
+		SendPacket(Ping, Server, true, false);
 //	Lock();
 	Server->m_dwLastPing = GetTickCount();
 //	Unlock();
@@ -643,7 +636,6 @@ void cNetwork::CheckPings()
 
 void cNetwork::Run()
 {
-	unsigned int TIMEOUT_MS = 1000;
 	//message loop for the network thread
 	while (!m_bQuit)
 	{
@@ -670,45 +662,113 @@ void cNetwork::Run()
 
 		Packet->Add(bRawData, iRawSize);
 
-		if (SockCompare((SOCKADDR_IN *)&Target, &m_siLoginServer.m_saServer))
-		{
-			ProcessLSPacket(Packet);
-		}
-		else
-		{
-			//Check worldservers
-			bool bFound = false;
-			for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
-			{
-				if (SockCompare((SOCKADDR_IN *)&Target, &(*i).m_saServer))
-				{
-					bFound = true;
-					ProcessWSPacket(Packet, &(*i));
-				}
-			}
+        bool bFound = false;
+        
 
-			if (!bFound)
-			{
-				SOCKADDR_IN *tp = (SOCKADDR_IN *) &Target;
+        // make sure we recognize this server before processing the packet
 
-				char tps[50];
-				char *tps2 = inet_ntoa(m_siLoginServer.m_saServer.sin_addr);
-				strcpy(tps, tps2);
-				m_Interface->OutputConsoleString("Unknown Target: %s:%i.  Login server: %s:%i"
-					, inet_ntoa(tp->sin_addr)
-					, (int)ntohs(tp->sin_port)
-					, tps
-					, (int)ntohs(m_siLoginServer.m_saServer.sin_port));
+        stServerInfo* verifiedServer = NULL;
 
-				delete Packet;
-			}
+        if (SockCompare((SOCKADDR_IN *)&Target, &m_siLoginServer.m_saServer)) {
+            verifiedServer = &m_siLoginServer;
+        }
+        else {
+            for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
+            {
+                if (SockCompare((SOCKADDR_IN *)&Target, &(*i).m_saServer))
+                {
+                    verifiedServer = &(*i);
+                }
+            }
+        }
+
+        if (verifiedServer != NULL) {
+            ProcessPacket(Packet, verifiedServer);
+            if (verifiedServer->m_dwLastPacketAck + ACK_INTERVAL_MS < GetTickCount()) {
+                SendAckPacket(verifiedServer);
+            }
+        } else {
+            /** We didn't recognize the packet source. Dump some info to the console for troubleshooting purposes. */
+			SOCKADDR_IN *tp = (SOCKADDR_IN *) &Target;
+
+			char tps[50];
+			char *tps2 = inet_ntoa(m_siLoginServer.m_saServer.sin_addr);
+			strcpy(tps, tps2);
+			m_Interface->OutputConsoleString("Received packet from unknown server: %s:%i.  Login server: %s:%i"
+				, inet_ntoa(tp->sin_addr)
+				, (int)ntohs(tp->sin_port)
+				, tps
+				, (int)ntohs(m_siLoginServer.m_saServer.sin_port));
+            m_Interface->OutputConsoleString("World servers:");
+            DumpWorldServerList();
+
+			delete Packet;
 		}
 
 		CheckPings();
 	}
 }
 
-void cNetwork::ProcessLSPacket(cPacket *Packet)
+void cNetwork::SendAckPacket(stServerInfo *Server) {
+    stTransitHeader header;
+    header.m_dwFlags = kAckSequence | kFlow | kEncryptedChecksum;
+    cPacket *ackSequence = new cPacket();
+    ackSequence->Add(&header, sizeof(header));
+    ackSequence->Add((DWORD)Server->m_dwRecvSequence);
+    SendPacket(ackSequence, Server, true, false);
+    Server->m_dwLastPacketAck = GetTickCount();
+}
+
+void cNetwork::ProcessFragment(cByteStream* stream, stServerInfo *Server) {
+    //Loop through the fragments
+    while (!stream->AtEOF())
+    {
+        const stFragmentHeader *fragHead = (const stFragmentHeader *)stream->ReadGroup(sizeof(stFragmentHeader));
+        WORD payloadSize = fragHead->m_wSize - sizeof(stFragmentHeader);
+        BYTE *fragData = stream->ReadGroup(payloadSize);
+
+        if (fragHead->m_wCount == 1)
+        {
+            // if count is 1 it's just a singular message, no group. process immediately!
+            cMessage *Msg = new cMessage(fragData, fragHead);
+            ProcessMessage(Msg, Server);
+        }
+        else
+        {
+            //Check for existing fragments
+            bool bAdded = false;
+            for (std::list< cMessage * >::iterator it = Server->m_lIncomingMessages.begin(); it != Server->m_lIncomingMessages.end(); it++)
+            {
+                if (bAdded)
+                    break;
+
+                cMessage *scan = *it;
+                /* fragment matches existing sequence we have started receiving */
+                if (scan->m_dwSequence == fragHead->m_dwSequence)
+                {
+                    scan->AddChunk(fragData, payloadSize, fragHead->m_wIndex);
+                    bAdded = true;
+
+                    if (scan->IsComplete())
+                    {
+                        ProcessMessage(scan, Server);
+                        Server->m_lIncomingMessages.erase(it);
+                    }
+                    break;
+                }
+            }
+
+            //No existing group matches, create one
+            if (!bAdded)
+            {
+                cMessage *Msg = new cMessage(fragData, fragHead);
+                Server->m_lIncomingMessages.push_back(Msg);
+            }
+        }
+    }
+}
+
+void cNetwork::ProcessPacket(cPacket *Packet, stServerInfo *Server)
 {
 //	Lock();
 
@@ -717,43 +777,66 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 
     cByteStream stream(Data, Head->m_wSize);
 
-	//Update our received sequence, if necessary
-	if (Head->m_dwSequence > m_siLoginServer.m_dwRecvSequence)
-		m_siLoginServer.m_dwRecvSequence = Head->m_dwSequence;
-
 	DWORD dwFlags = Head->m_dwFlags;
+
+    if (dwFlags & kServerSwitch) {
+        // server ID?
+        stream.ReadDWORD();
+        stream.ReadDWORD();
+    }
 
     if (dwFlags & kRetransmission)
     {
+        // XXX: not sure how to handle this one yet
+
         //Flags a packet that has been resent
         dwFlags &= ~kRetransmission;
     }
+
+    if (dwFlags & kRequestRetransmit)
+    {
+        // XXX: not sure how to handle this one yet
+        dwFlags &= ~kRejectRetransmit;
+    }
+
+    if (dwFlags & kRejectRetransmit)
+    {
+        // XXX: not sure how to handle this one yet
+        dwFlags &= ~kRejectRetransmit;
+    }
+
     if (dwFlags & kEncryptedChecksum)
     {
         //TODO: Check the checksum
         dwFlags &= ~kEncryptedChecksum;
     }
-    if (dwFlags & kTimeSync)
-    {
-        double serverTime = stream.ReadDouble();
-
-        time_t sT = (DWORD)serverTime;
-		time_t offset = time(NULL) - sT;
-		char *woohoo = ctime(&offset);
-
-		m_siLoginServer.m_dwLastSyncRecv = GetTickCount();
-		m_siLoginServer.m_flServerTime = serverTime;
-
-        dwFlags &= ~kTimeSync;
-	}
 
     if (dwFlags & kAckSequence)
     {
-        m_siLoginServer.m_dwSendSequence = max(m_siLoginServer.m_dwSendSequence, stream.ReadDWORD());
-
-        // TODO: Clear saved packets with sequences before this
-
+        DWORD ackSequenceNumber = stream.ReadDWORD();
+        Server->m_dwSendSequence = max(Server->m_dwSendSequence, ackSequenceNumber);
+        // TODO: Clear saved packets with sequences before the acked one
         dwFlags &= ~kAckSequence;
+    }
+    else {
+        // update sequence number only if not an ack
+        // XXX: are there other cases we should not update sequence number?
+        // XXX: are there cases where we should update even if it's just an ack?
+        if (Head->m_dwSequence != Server->m_dwRecvSequence + 1) {
+            Server->m_dwRecvSequence += 1;
+        }
+        else {
+            if (Head->m_dwSequence <= Server->m_dwRecvSequence && Head->m_dwSequence != 0) {
+                // we already received this packet
+                m_Interface->OutputConsoleString("Received packet #%d again", Head->m_dwSequence);
+            }
+            else if (Head->m_dwSequence > Server->m_dwRecvSequence + 1) {
+                // we missed a packet
+                // TODO: handle out of order packet by storing it and playing back later when we get the preceding packet
+                m_Interface->OutputConsoleString("Received out of order packet with id #%d", Head->m_dwSequence);
+                Server->m_dwRecvSequence = Head->m_dwSequence;
+            }
+        }
     }
 
 	// Second step of the connection process is to receive a Connect Request packet from the server
@@ -762,43 +845,49 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 		m_Interface->OutputConsoleString("Received connection request from server...");
 
         // Connection request from the server
-        m_siLoginServer.m_wTable = Head->m_wTable;
-        m_siLoginServer.m_dwLastSyncRecv = GetTickCount();
+        Server->m_wTable = Head->m_wTable;
+        Server->m_dwLastSyncRecv = GetTickCount();
 
-        m_siLoginServer.m_dwFlags |= SF_CONNECTED;
+        Server->m_dwFlags |= SF_CONNECTED;
 
-        m_siLoginServer.m_flServerTime = stream.ReadDouble(); //Time sync
-        m_siLoginServer.m_qwCookie = stream.ReadQWORD();  // Connection cookie
-		m_siLoginServer.m_wLogicalID = stream.ReadWORD(); // Client ID for our session
+        Server->m_flServerTime = stream.ReadDouble(); //Time sync
+        Server->m_qwCookie = stream.ReadQWORD();  // Connection cookie
+		Server->m_wLogicalID = stream.ReadWORD(); // Client ID for our session
         WORD paddingWord = stream.ReadWORD();
 
-        DWORD serverSeed = stream.ReadDWORD();
-        DWORD clientSeed = stream.ReadDWORD();
+        DWORD serverSeed = stream.ReadDWORD(); // for encrtypted checksum
+        DWORD clientSeed = stream.ReadDWORD(); // for encrypted checksum
 
-        m_siLoginServer.serverXorGen = new ChecksumXorGenerator();
-        m_siLoginServer.clientXorGen = new ChecksumXorGenerator();
-        m_siLoginServer.serverXorGen->init(serverSeed);
-        m_siLoginServer.clientXorGen->init(clientSeed);
-        m_siLoginServer.m_dwFlags |= SF_CRCSEEDS;
+        Server->serverXorGen = new ChecksumXorGenerator();
+        Server->clientXorGen = new ChecksumXorGenerator();
+        Server->serverXorGen->init(serverSeed);
+        Server->clientXorGen->init(clientSeed);
+        Server->m_dwFlags |= SF_CRCSEEDS;
 
         DWORD unknownPadding = stream.ReadDWORD();
 
-		m_Interface->SetConnProgress(0.1);
+		m_Interface->SetConnProgress(0.1f);
 		// XXX: delay to avoid race condition where server hasn't entered AuthConnectResponse state
 		Sleep(500);
-		m_Interface->SetConnProgress(0.5);
+		m_Interface->SetConnProgress(0.5f);
 		m_Interface->OutputConsoleString("Sending connect response...");
 		// Final third step of the connection process is to send connect response packet with cookie
         SendConnectResponse();
-		m_Interface->SetConnProgress(0.2);
+		m_Interface->SetConnProgress(0.2f);
 
         dwFlags &= ~kConnectRequest;
 
 		// login server is world server unless we get a redirect
+        // use the same CRC, etc. 
 		SOCKADDR_IN tpaddr;
-		memcpy(&tpaddr, &m_siLoginServer.m_saServer, sizeof(tpaddr));
-		tpaddr.sin_port = htons(m_siLoginServer.m_wBasePort);
-		AddWorldServer(tpaddr);
+		memcpy(&tpaddr, &Server->m_saServer, sizeof(tpaddr));
+		tpaddr.sin_port = htons(Server->m_wBasePort);
+        AddWorldServer(tpaddr);
+        SetActiveWorldServer(tpaddr);
+    
+        m_pActiveWorld->clientXorGen = Server->clientXorGen;
+        m_pActiveWorld->serverXorGen = Server->serverXorGen;
+        m_pActiveWorld->m_dwFlags |= SF_CRCSEEDS;
     }
     
     if (dwFlags & kNetError1)
@@ -810,53 +899,23 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 
     if (dwFlags & kBlobFragments)
     {
-        //Loop through the fragments
-        while (!stream.AtEOF())
-        {
-            const stFragmentHeader *fragHead = (const stFragmentHeader *) stream.ReadGroup(sizeof(stFragmentHeader));
-            WORD payloadSize = fragHead->m_wSize - sizeof(stFragmentHeader);
-            BYTE *fragData = stream.ReadGroup(payloadSize);
-
-        	if (fragHead->m_wCount == 1)
-        	{
-                cMessage *Msg = new cMessage(fragData, fragHead);
-        		ProcessMessage(Msg, &m_siLoginServer);
-        	}
-        	else
-        	{
-        		//Check for existing fragments
-        		bool bAdded = false;
-                for (std::list< cMessage * >::iterator it = m_siLoginServer.m_lIncomingMessages.begin(); it != m_siLoginServer.m_lIncomingMessages.end(); it++)
-        		{
-        			if (bAdded)
-        				break;
-        
-        			cMessage *scan = *it;
-					/* fragment matches existing sequence we have started receiving */
-        			if ( scan->m_dwSequence == fragHead->m_dwSequence)
-        			{
-						scan->AddChunk(fragData, payloadSize, fragHead->m_wIndex);
-        				bAdded = true;
-        
-        				if ( scan->IsComplete() )
-        				{
-        					ProcessMessage(scan, &m_siLoginServer);
-        					m_siLoginServer.m_lIncomingMessages.erase(it);
-        				}
-        				break;
-        			}
-        		}
-        
-        		//No existing group matches, create one
-        		if (!bAdded)
-        		{
-        			cMessage *Msg = new cMessage(fragData, fragHead);
-        			m_siLoginServer.m_lIncomingMessages.push_back(Msg);
-        		}
-        	}
-        }
+        ProcessFragment(&stream, Server);
 
         dwFlags &= ~kBlobFragments;
+    }
+
+    if (dwFlags & kTimeSync)
+    {
+        double serverTime = stream.ReadDouble();
+
+        time_t sT = (DWORD)serverTime;
+        time_t offset = time(NULL) - sT;
+        char *woohoo = ctime(&offset);
+
+        Server->m_dwLastSyncRecv = GetTickCount();
+        Server->m_flServerTime = serverTime;
+
+        dwFlags &= ~kTimeSync;
     }
 
     if (dwFlags > 0)
@@ -892,19 +951,19 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 	//	{
 	//		Lock();
 	//		DWORD serverSequence = *((DWORD *)&Data[iPos]);
-	//		if ((int)serverSequence < m_siLoginServer.m_iSendSequence)
+	//		if ((int)serverSequence < Server->m_iSendSequence)
 	//		{
 	//			//allow 1000 latency
-	//			if ((m_siLoginServer.m_dwLastPacketSent + 1000) < GetTickCount())
+	//			if ((Server->m_dwLastPacketSent + 1000) < GetTickCount())
 	//			{
 	//				//server lost some packets
-	//				for (int i = serverSequence + 1; i <= m_siLoginServer.m_iSendSequence; i++)
+	//				for (int i = serverSequence + 1; i <= Server->m_iSendSequence; i++)
 	//				{
 	//					SendLostPacket(i, &m_siLoginServer);
 	//				}
 	//			}
 	//		}
-	//		else if ((int)serverSequence > m_siLoginServer.m_iSendSequence)
+	//		else if ((int)serverSequence > Server->m_iSendSequence)
 	//		{
 	//			m_Interface->OutputConsoleString("Login sequence is AHEAD of the client (previous connection?)");
 	//		}
@@ -934,12 +993,12 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 //			}
 //			else
 //			{
-//				if (m_siLoginServer.m_lIncomingMessages.size() > 0)
+//				if (Server->m_lIncomingMessages.size() > 0)
 //				{
 //					//Check for existing fragments
 //					bool bAdded = false;
 //					std::list< cMessage * >::iterator it;
-//					for (it = m_siLoginServer.m_lIncomingMessages.begin(); it != m_siLoginServer.m_lIncomingMessages.end(); it++)
+//					for (it = Server->m_lIncomingMessages.begin(); it != Server->m_lIncomingMessages.end(); it++)
 //					{
 //						if (bAdded)
 //							break;
@@ -953,23 +1012,23 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 //							if ( scan->IsComplete() )
 //							{
 //								ProcessMessage(scan, &m_siLoginServer);
-//								m_siLoginServer.m_lIncomingMessages.erase(it);
+//								Server->m_lIncomingMessages.erase(it);
 //							}
 //							break;
 //						}
 //					}
 //
 //					//No existing group matches, create one
-//					if (!bAdded) //(it == m_siLoginServer.m_lIncomingMessages.end() )
+//					if (!bAdded) //(it == Server->m_lIncomingMessages.end() )
 //					{
 //						cMessage *Msg = new cMessage(FragData, FragHead);
-//						m_siLoginServer.m_lIncomingMessages.push_back(Msg);
+//						Server->m_lIncomingMessages.push_back(Msg);
 //					}
 //				}
 //				else
 //				{
 //					cMessage *Msg = new cMessage(FragData, FragHead);
-//					m_siLoginServer.m_lIncomingMessages.push_back(Msg);
+//					Server->m_lIncomingMessages.push_back(Msg);
 //				}
 //			}
 //		}
@@ -981,14 +1040,14 @@ void cNetwork::ProcessLSPacket(cPacket *Packet)
 //		memcpy(&tp, Data, sizeof(SOCKADDR_IN));
 //
 //		char tps[50];
-//		strcpy(tps, inet_ntoa(m_siLoginServer.m_saServer.sin_addr));
+//		strcpy(tps, inet_ntoa(Server->m_saServer.sin_addr));
 //		m_Interface->OutputConsoleString("Login Redirect: %s:%i -> %s:%i",
 //								  tps,
-//								  (int)ntohs(m_siLoginServer.m_saServer.sin_port),
+//								  (int)ntohs(Server->m_saServer.sin_port),
 //								  inet_ntoa(tp.sin_addr),
 //								  (int)ntohs(tp.sin_port) );
 //
-//		memcpy(&m_siLoginServer.m_saServer, Data, sizeof(SOCKADDR_IN));
+//		memcpy(&Server->m_saServer, Data, sizeof(SOCKADDR_IN));
 //		Connect();
 //		break;
 //	case 0x00020000:
@@ -1051,8 +1110,8 @@ void cNetwork::SendConnectResponse()
 
 void cNetwork::ProcessWSPacket(cPacket *Packet, stServerInfo *Server)
 {
-	// XXX: for now, everything is handled in ProcessLSPacket
-	return ProcessLSPacket(Packet);
+	// XXX: for now, everything is handled in ProcessPacket
+	return ProcessPacket(Packet, Server);
 ////	m_Interface->OutputConsoleString("Worldserver Packet...");
 //	stTransitHeader *Head = (stTransitHeader *) Packet->GetData();
 //	BYTE *Data = Packet->GetData() + sizeof(stTransitHeader);
@@ -1191,7 +1250,7 @@ void cNetwork::ProcessWSPacket(cPacket *Packet, stServerInfo *Server)
 //			};
 //			cPacket *Ack100 = new cPacket();
 //			Ack100->Add(acceptSeeds, sizeof(acceptSeeds));
-//			SendWSPacket(Ack100, Server, true, false);
+//			SendPacket(Ack100, Server, true, false);
 //
 //			break;
 //		}
@@ -1259,7 +1318,7 @@ void cNetwork::ProcessWSPacket(cPacket *Packet, stServerInfo *Server)
 //			};
 //			cPacket *Ack400 = new cPacket();
 //			Ack400->Add(acceptWTF, sizeof(acceptWTF));
-//			SendWSPacket(Ack400, Server, false, false);
+//			SendPacket(Ack400, Server, false, false);
 //			m_Interface->OutputConsoleString("Set output server to %s:%i...", inet_ntoa(Server->m_saServer.sin_addr), ntohs(Server->m_saServer.sin_port));
 //
 //			SetActiveWorldServer(Server->m_saServer);
@@ -1335,7 +1394,7 @@ void cNetwork::ProcessWSPacket(cPacket *Packet, stServerInfo *Server)
 //			cPacket *AcceptServer = new cPacket();
 //			AcceptServer->Add(acceptServer, sizeof(acceptServer));
 //			AcceptServer->Add(dwAck);
-//			SendWSPacket(AcceptServer, Server, false, false);
+//			SendPacket(AcceptServer, Server, false, false);
 //
 //			break;
 //		}
@@ -1975,15 +2034,12 @@ void cNetwork::ProcessMessage(cMessage *Msg, stServerInfo *Server)
 
 	case 0xF7DF:
 		{
+            // Server reported OK to enter world
+
 			//Enter 3D Mode
 			m_Interface->OutputConsoleString("Enter 3D Mode.");
 
-			cPacket *LoginPacket = new cPacket();
-			LoginPacket->Add((DWORD) 0xF657);
-			LoginPacket->Add(m_dwGUIDLogin);
-			LoginPacket->Add(std::string(m_zAccountName));
-			LoginPacket->Add((WORD) 0x0000);
-			SendLSMessage(LoginPacket, 6);
+            SendEnterWorldMessage(m_dwGUIDLogin, m_zAccountName);
 
 			m_Interface->SetInterfaceMode(eGame);
 			break;
@@ -2001,65 +2057,25 @@ void cNetwork::ProcessMessage(cMessage *Msg, stServerInfo *Server)
 		}
 	case 0xF7E1:
 		{
-			//Server Name/Players
+			// # of players
 			DWORD players = Msg->ReadDWORD();
-			Msg->ReadDWORD(); //unknown - 0xFFFFFFFF
+            // # maximum number of players
+			DWORD max_players = Msg->ReadDWORD();
+            // server name
 			char *server = Msg->ReadString();
-			m_Interface->SetWorldPlayers(server, players);
+			m_Interface->SetWorldPlayers(server, players, max_players);
 			delete []server;
 			//unknown WORD - 0x0000
 			break;
 		}
 	case 0xF7E5:
 		{
-			//Incoming message:
-//June 12
-/* e5 f7
-00 00 01 00 00 00 01 00  00 00 05 00 00 00 02 00
-00 00 00 00 00 00 01 00  00 00
-*/
-			//(LoginServer!) first server message, reply with F7E6
-			BYTE REP_F7E6[] =
-			{
-//July 05
-/*				0xe6, 0xf7, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x01, 0x00, 0x00, 0x00, 0x34, 0x00, 0x00, 0x00, 0xcc, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00,
-				0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0xd8, 0xff, 0xff, 0xff,
-				0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x27, 0x00, 0x00, 0x00,
-				0xd9, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00*/
-//Aug 05
-/*				0xe6, 0xf7, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x01, 0x00, 0x00, 0x00, 0x4f, 0x00, 0x00, 0x00, 0xb1, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00,
-				0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x2a, 0x00, 0x00, 0x00, 0xd6, 0xff, 0xff, 0xff,
-				0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00,
-				0xd8, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00*/
-//Oct 06
-/*				0xe6, 0xf7, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00,
-				0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x78, 0x00, 0x00, 0x00, 0x88, 0xff, 0xff, 0xff,
-				0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x73, 0x00, 0x00, 0x00,
-				0x8d, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00*/
-//June 12
-				0xe6, 0xf7, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				0x01, 0x00, 0x00, 0x00, 0x45, 0x05, 0x00, 0x00, 0xbb, 0xfa, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00,
-				0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xbe, 0x01, 0x00, 0x00, 0x42, 0xfe, 0xff, 0xff,
-				0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0xb3, 0x01, 0x00, 0x00,
-				0x4d, 0xfe, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-
-			};
-
-			cPacket *LoginPacket = new cPacket();
-			LoginPacket->Add(REP_F7E6, sizeof(REP_F7E6));
-			SendLSMessage(LoginPacket, 7);
-
-			break;
+            SendDDDInterrogationResponse();
+            break;
 		}
 	case 0xF7EA:
 		{
-			//(LoginServer!) second server message, reply with F7EA
-			cPacket *LoginPacket = new cPacket();
-			LoginPacket->Add((DWORD) 0xF7EA);
-			SendLSMessage(LoginPacket, 7);
+            SendDDDEndMessage();
 			break;
 		}
 	case 0xF7B0:
@@ -2441,7 +2457,7 @@ void cNetwork::SendLSMessage(cPacket *Packet, WORD wGroup)
 	stTransitHeader TransHead;
 	stFragmentHeader FragHead;
 
-	TransHead.m_dwFlags = 0x200;
+	TransHead.m_dwFlags = kLogonServerAddr;
 	TransHead.m_wSize = (WORD)sizeof(stFragmentHeader) + Packet->GetLength();
 	Lock();
 	FragHead.m_dwSequence = ++m_dwFragmentSequenceOut;
@@ -2465,9 +2481,9 @@ void cNetwork::SendWSMessage(cPacket *Packet, WORD wGroup)
 	cPacket *Msg = new cPacket();
 	stTransitHeader TransHead;
 	stFragmentHeader FragHead;
-
-	TransHead.m_dwFlags = 0x200;
+    TransHead.m_dwFlags = kEncryptedChecksum | kBlobFragments; // all world server packets have fragment flag?
 	TransHead.m_wSize = (WORD)sizeof(stFragmentHeader) + Packet->GetLength();
+    // XXX: no lock?
 	FragHead.m_dwSequence = ++m_dwFragmentSequenceOut;
 	FragHead.m_dwID = 0x80000000;
 	FragHead.m_wIndex = 0;
@@ -2479,8 +2495,8 @@ void cNetwork::SendWSMessage(cPacket *Packet, WORD wGroup)
 	Msg->Add(&FragHead);
     
 	Msg->Add(Packet->GetData(), Packet->GetLength());
-	SendWSPacket(Msg, m_pActiveWorld, true, true);
-	delete Packet;
+	SendPacket(Msg, m_pActiveWorld, true, true);
+    delete Packet;
 }
 
 void cNetwork::SendLSGameEvent(cPacket *Packet, WORD wGroup)
@@ -2512,16 +2528,53 @@ void cNetwork::DownloadLandblock(DWORD Landblock)
 	SendWSMessage(LBReq, 7);
 }
 
-void cNetwork::EnterGame(DWORD GUID)
+void cNetwork::SendDDDInterrogationResponse() {
+    //stTransitHeader header;
+    cPacket *DDDResponsePacket = new cPacket();
+    //DDDResponsePacket->Add(&header, sizeof(header));
+    DDDResponsePacket->Add((DWORD)0xF7E6);
+    //SendLSPacket(DDDResponsePacket, false, false);
+    SendWSMessage(DDDResponsePacket, 0x0014); // 0x0014 from pcap
+}
+
+void cNetwork::SendDDDEndMessage() {
+    //stTransitHeader header;
+    cPacket *DDDEndPacket = new cPacket();
+    //DDDEndPacket->Add(&header, sizeof(header));
+    DDDEndPacket->Add((DWORD)0xF7EA);
+    //SendLSPacket(DDDEndPacket, false, false);
+    SendWSMessage(DDDEndPacket, 0x0014); // 0x0014 from pcap
+}
+
+void cNetwork::SendEnterWorldRequest(DWORD GUID)
 {
 	bPortalMode = true;
-
 	m_dwGUIDLogin = GUID;
 
-	//send enter game packet
-	cPacket *LoginPacket = new cPacket();
-	LoginPacket->Add((DWORD) 0xF7C8);
-	SendLSMessage(LoginPacket, 6);
+	//send character enter world request
+    //stTransitHeader header;
+    //header.m_dwFlags = kEncryptedChecksum;
+    cPacket *EnterWorldReqPacket = new cPacket();
+    //EnterWorldReqPacket->Add(&header, sizeof(header));
+    EnterWorldReqPacket->Add((DWORD) 0xF7C8);
+	//SendLSPacket(EnterWorldReqPacket, false, false);
+    SendWSMessage(EnterWorldReqPacket, 0x0014); // 0x0014 from pcap
+    m_Interface->SetInterfaceMode(eEnteringGame);
+    // TODO: start timeout waiting for 0xF7DF message
+}
+
+void cNetwork::SendEnterWorldMessage(DWORD GUID, char* account_name)
+{
+    //stTransitHeader header;
+    //header.m_dwFlags = kEncryptedChecksum;
+    cPacket *EnterWorldPacket = new cPacket();
+    //EnterWorldPacket->Add(&header, sizeof(header));
+    EnterWorldPacket->Add((DWORD)0xF657); // opcode for character enter world
+    EnterWorldPacket->Add(GUID); // character ID
+    EnterWorldPacket->Add(std::string(account_name));
+    EnterWorldPacket->Add((WORD)0x0000);
+    //SendLSPacket(EnterWorldPacket, false, false);
+    SendWSMessage(EnterWorldPacket, 0x0014); // 0x0014 from pcap
 }
 
 void cNetwork::SendPositionUpdate(stLocation *Location, stMoveInfo *MoveInfo)
@@ -2714,11 +2767,6 @@ stServerInfo * cNetwork::AddWorldServer(SOCKADDR_IN NewServer)
 	}
 	stServerInfo tpNewServer;
 
-	m_Interface->OutputConsoleString("Adding World Server: %s:%i",
-									  inet_ntoa(NewServer.sin_addr),
-									  (int)ntohs(NewServer.sin_port));
-
-
 	//fill in tpNewServer struct...
 	memcpy(&tpNewServer.m_saServer, &NewServer, sizeof(SOCKADDR_IN));
 	tpNewServer.m_lSentPackets.clear();
@@ -2728,27 +2776,60 @@ stServerInfo * cNetwork::AddWorldServer(SOCKADDR_IN NewServer)
 	tpNewServer.m_dwFlags = 0;
 	tpNewServer.m_dwLastPing = GetTickCount();
 	tpNewServer.m_dwLastSyncSent = 0;
-	tpNewServer.m_dwRecvSequence = 0;
+	tpNewServer.m_dwRecvSequence = 0; // should we start this at 2?
 	tpNewServer.m_dwLastPacketSent = GetTickCount();
 	tpNewServer.m_dwLastConnectAttempt = GetTickCount();
+    tpNewServer.m_dwLastPacketAck = GetTickCount();
+    // if we don't set the base port, the edge case handler for connect response will clobber our port!
+    tpNewServer.m_wBasePort = ntohs(NewServer.sin_port);
 
 	m_siWorldServers.push_back(tpNewServer);
+
+
+    m_Interface->OutputConsoleString("Added World Server: %s:%i",
+        inet_ntoa(tpNewServer.m_saServer.sin_addr),
+        (int)ntohs(tpNewServer.m_saServer.sin_port));
+
 	Unlock();
+    // race condition? shouldn't this return a pointer to tpNewServer instead, since back may have changed?
 	return &m_siWorldServers.back();
 }
 
+
+void cNetwork::DumpWorldServerList() {
+    for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
+    {
+        m_Interface->OutputConsoleString("World server #%d -- %s:%d", i, inet_ntoa((*i).m_saServer.sin_addr), (int)ntohs((*i).m_saServer.sin_port));
+    }
+}
+
+
 void cNetwork::SetActiveWorldServer(SOCKADDR_IN NewServer)
 {
+    bool foundServer = false;
+
+    m_Interface->OutputConsoleString("Selecting World Server: %s:%i...",
+        inet_ntoa(NewServer.sin_addr),
+        (int)ntohs(NewServer.sin_port));
+
 	Lock();
 	for (std::list<stServerInfo>::iterator i = m_siWorldServers.begin(); i != m_siWorldServers.end(); i++)
 	{
 		if (SockCompare(&NewServer, &(*i).m_saServer))
 		{
+            foundServer = true;
 			m_pActiveWorld = &(*i);
 			break;
 		}
 	}
 	Unlock();
+
+    if (!foundServer) {
+        m_Interface->OutputConsoleString("Couldn't set active world server -- specified server not found in list");
+    }
+    else {
+        m_Interface->OutputConsoleString("Selected world server.");
+    }
 }
 
 void cNetwork::SendMaterialize()
