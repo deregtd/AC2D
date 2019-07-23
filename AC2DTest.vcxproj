@@ -174,7 +174,7 @@
     </ClCompile>
     <Link>
       <AdditionalDependencies>opengl32.lib;glu32.lib;ws2_32.lib;zlib\zlibstat.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <OutputFile>C:\turbine\ac\3\ac2dtest.exe</OutputFile>
+      <OutputFile>$(OutputPath)\$(TargetFileName)</OutputFile>
       <IgnoreSpecificDefaultLibraries>LIBC;%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
