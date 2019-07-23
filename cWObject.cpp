@@ -981,7 +981,9 @@ void cWObject::LoadAnimset()
 			m_mAnims[asTemp.dwID] = asTemp;
 		}
 	}
-	fclose(out);
+    if (out != NULL) {
+        fclose(out);
+    }
 }
 
 WORD cWObject::GetStance()
