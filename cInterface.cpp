@@ -1609,10 +1609,10 @@ bool cInterface::OnRender( IWindow & Window, double TimeSlice )
 				std::vector<stPaletteSwap> pal; pal.clear();
 
 				char tpfn[80];
-				size_t iCount;
+				size_t iCount = 0;
 				sprintf(tpfn, "%08X.charcache", m_CharList.Chars[i].GUID);
 				FILE *tpo = fopen(tpfn, "rb");
-				if (tpo)
+				if (tpo != NULL)
 				{
 					fread(&iCount, 4, 1, tpo);
 
