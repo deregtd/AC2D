@@ -319,7 +319,7 @@ void cInterface::OutputConsoleString(std::string & Output)
 	OutputDebugString(Output.c_str());
 	OutputDebugString(_T("\r\n"));
 	
-	FILE *out = fopen("c:\\AC2DConsole.txt","at");
+	FILE *out = fopen("AC2DConsole.txt","at");
 	if (out)
 	{
 		fprintf(out, "%s\r\n", Output.c_str());
@@ -535,6 +535,13 @@ void cInterface::SetInterfaceMode(eInterfaceMode Mode)
 		for (int i=0;i<5;i++)
 			m_stCharList[i]->SetVisible(true);
 		break;
+    case eEnteringGame:
+        m_picEnterGame->SetVisible(false);
+        m_stMOTD->SetVisible(true);
+        m_picSelChar->SetVisible(true);
+        for (int i = 0;i < 5;i++)
+            m_stCharList[i]->SetVisible(true);
+        break;
 	case eGame:
 		m_picEnterGame->SetVisible(false);
 		m_stMOTD->SetVisible(false);
@@ -585,14 +592,14 @@ void cInterface::SetMOTD(char *MOTD)
 	Unlock();
 }
 
-void cInterface::SetWorldPlayers(char *WorldName, DWORD Players)
+void cInterface::SetWorldPlayers(char *WorldName, DWORD Players, DWORD MaxPlayers)
 {
 	m_dwNumPlayers = Players;
 	strcpy(m_sWorldName, WorldName);
 
-	char blah[500];
-	sprintf(blah, "World: %s, Players: %i", WorldName, Players);
-	SetMOTD(blah);
+	char motdBuf[500];
+	sprintf(motdBuf, "World: %s, Players: %i/%i", WorldName, Players, MaxPlayers);
+	SetMOTD(motdBuf);
 }
 
 void cInterface::SetLastAttacker(DWORD GUID)
@@ -1036,12 +1043,10 @@ bool cInterface::OnMouseUp( IWindow & Window, float X, float Y, unsigned long Bu
 		if (&Window == m_picEnterGame)
 		{
 			//Enter game
-
+            OutputConsoleString("Trying to enter game...");
 			m_mwRadar->SetChar(m_dwSelChar);
-
 			m_picEnterGame->SetPicture(0x06004CB2);
-
-			m_Network->EnterGame(m_dwSelChar);
+			m_Network->SendEnterWorldRequest(m_dwSelChar);
 		}
 	}
 
@@ -1604,10 +1609,10 @@ bool cInterface::OnRender( IWindow & Window, double TimeSlice )
 				std::vector<stPaletteSwap> pal; pal.clear();
 
 				char tpfn[80];
-				size_t iCount;
+				size_t iCount = 0;
 				sprintf(tpfn, "%08X.charcache", m_CharList.Chars[i].GUID);
 				FILE *tpo = fopen(tpfn, "rb");
-				if (tpo)
+				if (tpo != NULL)
 				{
 					fread(&iCount, 4, 1, tpo);
 

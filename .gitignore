@@ -7,6 +7,8 @@ Release
 ipch
 Thumbs.db
 
+bin/
+
 # Precached DAT files by AC2D
 *.pre
 *.aps

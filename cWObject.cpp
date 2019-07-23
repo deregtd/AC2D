@@ -873,7 +873,8 @@ void cWObject::LoadAnimset()
 		DWORD unk2 = BS.ReadDWORD();
 	}
 
-	FILE *out=fopen("c:\\aset.txt","wt");
+    FILE *out = NULL;
+	//FILE *out=fopen("aset.txt","wt");
 
 	DWORD vec2count = BS.ReadDWORD();
 	for (DWORD i=0; i<vec2count; i++)
@@ -889,7 +890,9 @@ void cWObject::LoadAnimset()
 		aiTemp.dwEndFrame = BS.ReadDWORD(); //0xFFFFFFFF
 		aiTemp.fPlaySpeed = BS.ReadFloat();
 
-		fprintf(out, "%08X (%08X): %08X\n", asTemp.dwID, asTemp.dwFlags, aiTemp.dwAnim);
+        if (out != NULL) {
+            fprintf(out, "%08X (%08X): %08X\n", asTemp.dwID, asTemp.dwFlags, aiTemp.dwAnim);
+        }
 
 		if (aiTemp.fPlaySpeed == 0)
 			aiTemp.fPlaySpeed = 30.0f;
@@ -929,7 +932,9 @@ void cWObject::LoadAnimset()
 		WORD wUnk = BS.ReadWORD();
 		WORD wStance = BS.ReadWORD();
 
-		fprintf(out, "%04X (%04X): \n", wStance, wUnk);
+        if (out != NULL) {
+            fprintf(out, "%04X (%04X): \n", wStance, wUnk);
+        }
 
 		DWORD vec5count = BS.ReadDWORD();
 		for (DWORD h=0; h<vec5count; h++)
@@ -938,7 +943,9 @@ void cWObject::LoadAnimset()
 			asTemp.dwID = BS.ReadWORD();
 			asTemp.dwFlags = BS.ReadWORD();
 
-			fprintf(out, "  %04X (%04X):: ", asTemp.dwID, asTemp.dwFlags);
+            if (out != NULL) {
+                fprintf(out, "  %04X (%04X):: ", asTemp.dwID, asTemp.dwFlags);
+            }
 
 			DWORD vec6count = BS.ReadDWORD();
 			for (DWORD vec6it = 0; vec6it < vec6count; vec6it++)
@@ -949,7 +956,10 @@ void cWObject::LoadAnimset()
 				aiTemp.dwEndFrame = BS.ReadDWORD(); //0xFFFFFFFF
 				aiTemp.fPlaySpeed = BS.ReadFloat();
 
-				fprintf(out, "%08X ", aiTemp.dwAnim);
+                if (out != NULL)
+                {
+                    fprintf(out, "%08X ", aiTemp.dwAnim);
+                }
 
 				//?
 				if (aiTemp.fPlaySpeed == 0)
@@ -958,7 +968,9 @@ void cWObject::LoadAnimset()
 				asTemp.vAnims.push_back(aiTemp);
 			}
 
-			fprintf(out, "\n");
+            if (out != NULL) {
+                fprintf(out, "\n");
+            }
 
 			//uhh, ick...
 			if ((wUnk == 0) || (wUnk == 3))
@@ -969,7 +981,9 @@ void cWObject::LoadAnimset()
 			m_mAnims[asTemp.dwID] = asTemp;
 		}
 	}
-	fclose(out);
+    if (out != NULL) {
+        fclose(out);
+    }
 }
 
 WORD cWObject::GetStance()

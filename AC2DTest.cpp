@@ -19,7 +19,13 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
                      LPTSTR    lpCmdLine,
                      int       nCmdShow)
 {
-	MessageBox(NULL, lpCmdLine, NULL, MB_OK);
+	// Show command line parameters
+    if (lpCmdLine[0] == 0) {
+        MessageBox(NULL, "No command line parameters were supplied", "Error!", MB_OK);
+    }
+    else {
+        MessageBox(NULL, lpCmdLine, "Commmand Line Parameters:", MB_OK);
+    }
 
 	hInst = hInstance;
 

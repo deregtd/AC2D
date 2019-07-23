@@ -31,6 +31,7 @@ struct stCharList {
 enum eInterfaceMode {
 	eConnecting,
 	eMOTD,
+    eEnteringGame,
 	eGame
 };
 
@@ -63,7 +64,7 @@ public:
 	void SetConnProgress(float NewProgress);
 	void SetCharList(stCharList *CharList);
 	void SetMOTD(char *MOTD);
-	void SetWorldPlayers(char *WorldName, DWORD Players);
+	void SetWorldPlayers(char *WorldName, DWORD Players, DWORD MaxPlayers);
 	void SetLastAttacker(DWORD GUID);
 	float GetZoomSpeed() { return fSpeed; }
 	WORD GetPosition()
