@@ -235,7 +235,7 @@ public:
       
 		int iMaxSkill = m_CharInfo->GetMaxSkill();
 
-		char blah[15];
+		char textBuffer[64]; // XXX: this can be slimmed down to whatever the longest possible representation is from itoa
 		for (int i=0; i<=iMaxSkill; i++)
 		{
 			if (!m_CharInfo->GetSkillValid(i))
@@ -245,7 +245,7 @@ public:
 			if (Sk->dwTrained != m_ttList[i])
 				bNeedResize = true;
 
-			m_mVals[i]->SetText(itoa(Sk->dwBuffed, blah, 10));
+			m_mVals[i]->SetText(itoa(Sk->dwBuffed, textBuffer, 10));
 			m_mVals[i]->SetTextColor((Sk->dwBase != Sk->dwBuffed) ? 0xFF6060 : 0xFFFFFF);
 		}
 
@@ -337,13 +337,13 @@ public:
 	}
 	bool RenderEventAbstractor< cStatWindow >::OnRender( IWindow & Window, double TimeSlice )
 	{
-		char blah[5];
+		char textBuffer[64]; // XXX: this can be slimmed down to whatever the longest possible representation is from itoa
 
 		for (int i=0; i<6; i++)
 		{
 			stStatInfo *SI = m_CharInfo->GetStat(i+1);
 
-			m_stVals[i].SetText(itoa(SI->dwBuffed, blah, 10));
+			m_stVals[i].SetText(itoa(SI->dwBuffed, textBuffer, 10));
 			m_stVals[i].SetTextColor((SI->dwBase != SI->dwBuffed) ? 0xFF6060 : 0xFFFFFF);
 		}
 
@@ -351,7 +351,7 @@ public:
 		{
 			stSecStatInfo *SI = m_CharInfo->GetSecStat((i+1) << 1);
 
-			m_stVals[i+6].SetText(itoa(SI->dwBuffed, blah, 10));
+			m_stVals[i+6].SetText(itoa(SI->dwBuffed, textBuffer, 10));
 			m_stVals[i+6].SetTextColor((SI->dwBase != SI->dwBuffed) ? 0xFF6060 : 0xFFFFFF);
 		}
 

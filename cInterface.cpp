@@ -597,9 +597,9 @@ void cInterface::SetWorldPlayers(char *WorldName, DWORD Players, DWORD MaxPlayer
 	m_dwNumPlayers = Players;
 	strcpy(m_sWorldName, WorldName);
 
-	char blah[500];
-	sprintf(blah, "World: %s, Players: %i/%i", WorldName, Players, MaxPlayers);
-	SetMOTD(blah);
+	char motdBuf[500];
+	sprintf(motdBuf, "World: %s, Players: %i/%i", WorldName, Players, MaxPlayers);
+	SetMOTD(motdBuf);
 }
 
 void cInterface::SetLastAttacker(DWORD GUID)
