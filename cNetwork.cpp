@@ -884,10 +884,12 @@ void cNetwork::ProcessPacket(cPacket *Packet, stServerInfo *Server)
 		tpaddr.sin_port = htons(Server->m_wBasePort);
         AddWorldServer(tpaddr);
         SetActiveWorldServer(tpaddr);
-    
-        m_pActiveWorld->clientXorGen = Server->clientXorGen;
-        m_pActiveWorld->serverXorGen = Server->serverXorGen;
-        m_pActiveWorld->m_dwFlags |= SF_CRCSEEDS;
+	
+	m_pActiveWorld->clientXorGen = Server->clientXorGen;
+	m_pActiveWorld->serverXorGen = Server->serverXorGen;
+        m_pActiveWorld->m_dwFlags |= SF_CRCSEEDS | SF_CONNECTED;
+        m_pActiveWorld->m_wLogicalID = Server->m_wLogicalID;
+        m_pActiveWorld->m_wTable = 0x14; // XXX: from pcaps?
     }
     
     if (dwFlags & kNetError1)
